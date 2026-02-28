@@ -18,19 +18,29 @@ export async function DELETE(
     const { id } = await params;
     const supabaseAdmin = createSupabaseAdminClient();
 
-    // First, find the profile that links to this crew to get the auth user id
+    // 1. Find profiles linked to this crew (to get auth user ids)
     const { data: profiles } = await supabaseAdmin
       .from('profiles')
       .select('id')
       .eq('crew_id', id);
 
-    // Unassign this crew from any jobs before deleting
+    // 2. Unassign this crew from any jobs
     await supabaseAdmin
       .from('jobs')
       .update({ crew_id: null })
       .eq('crew_id', id);
 
-    // Delete the crew
+    // 3. Delete profiles FIRST (they have FK to crews), then auth users
+    if (profiles && profiles.length > 0) {
+      for (const profile of profiles) {
+        // Delete profile first (removes FK constraint to crews)
+        await supabaseAdmin.from('profiles').delete().eq('id', profile.id);
+        // Then delete auth user
+        await supabaseAdmin.auth.admin.deleteUser(profile.id);
+      }
+    }
+
+    // 4. Now delete the crew (no more FK constraints)
     const { error: crewError } = await supabaseAdmin
       .from('crews')
       .delete()
@@ -41,16 +51,6 @@ export async function DELETE(
         { success: false, error: crewError.message },
         { status: 500 }
       );
-    }
-
-    // Delete associated auth users (if any profiles were linked)
-    if (profiles && profiles.length > 0) {
-      for (const profile of profiles) {
-        // Delete profile first
-        await supabaseAdmin.from('profiles').delete().eq('id', profile.id);
-        // Then delete auth user
-        await supabaseAdmin.auth.admin.deleteUser(profile.id);
-      }
     }
 
     return NextResponse.json({
