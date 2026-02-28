@@ -1,16 +1,17 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 
 export default function HomePage() {
-  const { isAuthenticated, isAdmin, isLoading } = useAuth();
+  const { isAuthenticated, isAdmin, isLoading, session } = useAuth();
   const router = useRouter();
+  const [hasRedirected, setHasRedirected] = useState(false);
 
   useEffect(() => {
-    if (!isLoading) {
-      if (isAuthenticated) {
+    if (!isLoading && !hasRedirected) {
+      if (isAuthenticated || session) {
         if (isAdmin) {
           router.push('/admin/dashboard');
         } else {
@@ -19,8 +20,9 @@ export default function HomePage() {
       } else {
         router.push('/login');
       }
+      setHasRedirected(true);
     }
-  }, [isAuthenticated, isAdmin, isLoading, router]);
+  }, [isAuthenticated, isAdmin, isLoading, session, hasRedirected, router]);
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-gray-100">

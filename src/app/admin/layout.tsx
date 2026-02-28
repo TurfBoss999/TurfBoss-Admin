@@ -10,24 +10,28 @@ export default function AdminLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const { isAuthenticated, isAdmin, isLoading } = useAuth();
+  const { isAuthenticated, isAdmin, isLoading, session } = useAuth();
   const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [hasChecked, setHasChecked] = useState(false);
 
   const toggleSidebar = useCallback(() => setSidebarOpen((prev) => !prev), []);
   const closeSidebar = useCallback(() => setSidebarOpen(false), []);
 
   useEffect(() => {
-    if (!isLoading) {
-      if (!isAuthenticated) {
+    if (!isLoading && hasChecked) {
+      if (!isAuthenticated && !session) {
         router.push('/login');
       } else if (!isAdmin) {
         router.push('/dashboard');
       }
     }
-  }, [isAuthenticated, isAdmin, isLoading, router]);
+    if (!isLoading) {
+      setHasChecked(true);
+    }
+  }, [isAuthenticated, isAdmin, isLoading, session, hasChecked, router]);
 
-  if (isLoading) {
+  if (isLoading || !hasChecked) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-gray-100">
         <div className="flex items-center space-x-2">

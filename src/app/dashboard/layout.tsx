@@ -10,20 +10,25 @@ export default function DashboardLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, session } = useAuth();
   const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [hasChecked, setHasChecked] = useState(false);
 
   const toggleSidebar = useCallback(() => setSidebarOpen((prev) => !prev), []);
   const closeSidebar = useCallback(() => setSidebarOpen(false), []);
 
   useEffect(() => {
-    if (!isLoading && !isAuthenticated) {
+    // Only redirect after initial load is complete AND we've confirmed no session
+    if (!isLoading && !isAuthenticated && !session && hasChecked) {
       router.push('/login');
     }
-  }, [isAuthenticated, isLoading, router]);
+    if (!isLoading) {
+      setHasChecked(true);
+    }
+  }, [isAuthenticated, isLoading, session, hasChecked, router]);
 
-  if (isLoading || !isAuthenticated) {
+  if (isLoading || !hasChecked) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-gray-100">
         <div className="flex items-center space-x-2">

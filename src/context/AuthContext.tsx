@@ -104,14 +104,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Skip INITIAL_SESSION since getSession() above handles it
         if (event === 'INITIAL_SESSION') return;
 
-        if (event === 'TOKEN_REFRESHED') {
+        if (event === 'TOKEN_REFRESHED' && newSession) {
           setSession(newSession);
+          // Re-fetch user profile on token refresh to ensure state is consistent
+          if (newSession.user) {
+            const profile = await fetchProfile(newSession.user.id);
+            setUser(buildAuthUser(newSession.user, profile));
+          }
           return;
         }
 
         if (event === 'SIGNED_IN' && newSession?.user) {
-          // Only update if we don't already have this user set (login() handles it directly)
+          // Update both session and user
           setSession(newSession);
+          const profile = await fetchProfile(newSession.user.id);
+          setUser(buildAuthUser(newSession.user, profile));
           return;
         }
 

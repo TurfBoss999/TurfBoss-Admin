@@ -515,6 +515,7 @@ export default function JobDetailPage() {
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-xl font-semibold text-gray-900">Edit Job</h2>
               <button
+                type="button"
                 onClick={() => setShowEditModal(false)}
                 className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
               >
@@ -571,6 +572,7 @@ export default function JobDetailPage() {
 
             <div className="mt-6 flex justify-end space-x-3">
               <button
+                type="button"
                 onClick={() => setShowEditModal(false)}
                 disabled={savingEdit}
                 className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
@@ -578,6 +580,7 @@ export default function JobDetailPage() {
                 Cancel
               </button>
               <button
+                type="button"
                 onClick={handleSaveEdit}
                 disabled={savingEdit || !editForm.service_type || !editForm.address || !editForm.date}
                 className="inline-flex items-center rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
