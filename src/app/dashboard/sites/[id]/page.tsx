@@ -33,6 +33,56 @@ export default function JobDetailPage() {
   // Status update state
   const [updatingStatus, setUpdatingStatus] = useState(false);
 
+  // Edit modal state
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editForm, setEditForm] = useState({
+    service_type: '',
+    address: '',
+    date: '',
+    notes: '',
+  });
+  const [savingEdit, setSavingEdit] = useState(false);
+
+  function openEditModal() {
+    if (!job) return;
+    setEditForm({
+      service_type: job.service_type || '',
+      address: job.address || '',
+      date: job.date || '',
+      notes: job.notes || '',
+    });
+    setShowEditModal(true);
+  }
+
+  async function handleSaveEdit() {
+    if (!job) return;
+    try {
+      setSavingEdit(true);
+
+      const { data, error: updateError } = await supabase
+        .from('jobs')
+        .update({
+          service_type: editForm.service_type,
+          address: editForm.address,
+          date: editForm.date,
+          notes: editForm.notes,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', id)
+        .select('*, crew:crews(*)')
+        .single();
+
+      if (updateError) throw updateError;
+      setJob(data as JobWithCrew);
+      setShowEditModal(false);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to update job';
+      alert(message);
+    } finally {
+      setSavingEdit(false);
+    }
+  }
+
   useEffect(() => {
     let cancelled = false;
 
@@ -200,7 +250,10 @@ export default function JobDetailPage() {
           </div>
         </div>
         <div className="flex items-center space-x-3">
-          <button className="inline-flex items-center space-x-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
+          <button
+            onClick={openEditModal}
+            className="inline-flex items-center space-x-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+          >
             <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
             </svg>
@@ -454,6 +507,97 @@ export default function JobDetailPage() {
           </div>
         </div>
       </div>
+
+      {/* Edit Job Modal */}
+      {showEditModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="w-full max-w-lg mx-4 rounded-xl bg-white p-6 shadow-xl">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-xl font-semibold text-gray-900">Edit Job</h2>
+              <button
+                onClick={() => setShowEditModal(false)}
+                className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+              >
+                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Service Type</label>
+                <input
+                  type="text"
+                  value={editForm.service_type}
+                  onChange={(e) => setEditForm({ ...editForm, service_type: e.target.value })}
+                  className="w-full rounded-lg border border-gray-300 px-4 py-2 text-gray-900 focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
+                  placeholder="e.g., Snow Removal"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Address</label>
+                <input
+                  type="text"
+                  value={editForm.address}
+                  onChange={(e) => setEditForm({ ...editForm, address: e.target.value })}
+                  className="w-full rounded-lg border border-gray-300 px-4 py-2 text-gray-900 focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
+                  placeholder="123 Main St, City, State"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Date</label>
+                <input
+                  type="date"
+                  value={editForm.date}
+                  onChange={(e) => setEditForm({ ...editForm, date: e.target.value })}
+                  className="w-full rounded-lg border border-gray-300 px-4 py-2 text-gray-900 focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
+                <textarea
+                  value={editForm.notes}
+                  onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })}
+                  rows={3}
+                  className="w-full rounded-lg border border-gray-300 px-4 py-2 text-gray-900 focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
+                  placeholder="Additional notes..."
+                />
+              </div>
+            </div>
+
+            <div className="mt-6 flex justify-end space-x-3">
+              <button
+                onClick={() => setShowEditModal(false)}
+                disabled={savingEdit}
+                className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveEdit}
+                disabled={savingEdit || !editForm.service_type || !editForm.address || !editForm.date}
+                className="inline-flex items-center rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
+              >
+                {savingEdit ? (
+                  <>
+                    <svg className="h-4 w-4 animate-spin mr-2" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    Saving...
+                  </>
+                ) : (
+                  'Save Changes'
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
