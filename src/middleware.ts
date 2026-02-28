@@ -54,8 +54,18 @@ export async function middleware(request: NextRequest) {
     }
   );
 
-  // Refresh session if needed
-  await supabase.auth.getUser();
+  // Refresh session and check authentication
+  const { data: { user } } = await supabase.auth.getUser();
+
+  // If user is not authenticated and trying to access protected routes, redirect to login
+  const isProtectedRoute = request.nextUrl.pathname.startsWith('/dashboard') || 
+                           request.nextUrl.pathname.startsWith('/admin');
+  
+  if (!user && isProtectedRoute) {
+    const loginUrl = new URL('/login', request.url);
+    loginUrl.searchParams.set('redirect', request.nextUrl.pathname);
+    return NextResponse.redirect(loginUrl);
+  }
 
   return response;
 }
