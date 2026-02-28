@@ -38,7 +38,7 @@ export async function requireAdmin(): Promise<AdminUser> {
   }
 
   // Fetch user profile to check role
-  let { data: profile, error: profileError } = await supabase
+  const { data: profile, error: profileError } = await supabase
     .from('profiles')
     .select('*')
     .eq('id', user.id)

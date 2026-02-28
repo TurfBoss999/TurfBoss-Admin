@@ -2,16 +2,9 @@
 
 import { useState, useEffect } from 'react';
 import { getSupabaseBrowserClient } from '@/lib/supabaseBrowser';
-import { JobWithCrew, JobStatus } from '@/types/database';
+import { JobWithCrew } from '@/types/database';
 import StatusBadge from '@/components/StatusBadge';
 import Link from 'next/link';
-
-const STATUS_DISPLAY: Record<JobStatus, string> = {
-  scheduled: 'Scheduled',
-  in_progress: 'In Progress',
-  completed: 'Completed',
-  cancelled: 'Cancelled',
-};
 
 const supabase = getSupabaseBrowserClient();
 
