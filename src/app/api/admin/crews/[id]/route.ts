@@ -24,7 +24,13 @@ export async function DELETE(
       .select('id')
       .eq('crew_id', id);
 
-    // Delete the crew (this will set crew_id to null on jobs due to FK constraint)
+    // Unassign this crew from any jobs before deleting
+    await supabaseAdmin
+      .from('jobs')
+      .update({ crew_id: null })
+      .eq('crew_id', id);
+
+    // Delete the crew
     const { error: crewError } = await supabaseAdmin
       .from('crews')
       .delete()
