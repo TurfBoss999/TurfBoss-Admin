@@ -179,12 +179,15 @@ export default function TeamsPage() {
 
   async function handleDeleteCrew(id: string) {
     try {
-      const { error: deleteError } = await supabase
-        .from('crews')
-        .delete()
-        .eq('id', id);
+      const res = await fetch(`/api/admin/crews/${id}`, {
+        method: 'DELETE',
+      });
 
-      if (deleteError) throw deleteError;
+      const result = await res.json();
+
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to delete crew');
+      }
 
       setCrews((prev) => prev.filter((c) => c.id !== id));
       setDeletingId(null);
