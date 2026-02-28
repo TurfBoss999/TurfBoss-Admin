@@ -38,16 +38,18 @@ export async function requireAdmin(): Promise<AdminUser> {
   }
 
   // Fetch user profile to check role
-  const { data: profile, error: profileError } = await supabase
+  const result = await supabase
     .from('profiles')
     .select('*')
     .eq('id', user.id)
     .maybeSingle(); // Use maybeSingle to avoid error on 0 rows
 
-  if (profileError) {
-    console.error('Error fetching profile:', profileError);
+  if (result.error) {
+    console.error('Error fetching profile:', result.error);
     throw new AdminAuthError('Unauthorized: Error fetching profile', 403);
   }
+
+  let profile = result.data;
 
   // If no profile exists, create one with admin role for first user
   if (!profile) {

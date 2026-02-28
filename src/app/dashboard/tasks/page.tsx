@@ -13,34 +13,29 @@ export default function TasksPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
+  async function fetchJobs() {
+    try {
+      setLoading(true);
+      setError(null);
 
-    async function fetchJobs() {
-      try {
-        setLoading(true);
-        setError(null);
+      const { data, error: fetchError } = await supabase
+        .from('jobs')
+        .select('*, crew:crews(*)')
+        .order('date', { ascending: true });
 
-        const { data, error: fetchError } = await supabase
-          .from('jobs')
-          .select('*, crew:crews(*)')
-          .order('date', { ascending: true });
+      if (fetchError) throw fetchError;
 
-        if (cancelled) return;
-        if (fetchError) throw fetchError;
-
-        setJobs(data as JobWithCrew[]);
-      } catch (err) {
-        if (cancelled) return;
-        const message = err instanceof Error ? err.message : 'Failed to fetch jobs';
-        setError(message);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+      setJobs(data as JobWithCrew[]);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to fetch jobs';
+      setError(message);
+    } finally {
+      setLoading(false);
     }
+  }
 
+  useEffect(() => {
     fetchJobs();
-    return () => { cancelled = true; };
   }, []);
 
   if (loading) {

@@ -87,14 +87,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     initializedRef.current = true;
 
     // 1. Check session immediately on mount
-    supabase.auth.getSession().then(async ({ data: { session: currentSession } }) => {
+    const initSession = async () => {
+      const { data: { session: currentSession } } = await supabase.auth.getSession();
       if (currentSession?.user) {
         const profile = await fetchProfile(currentSession.user.id);
         setUser(buildAuthUser(currentSession.user, profile));
         setSession(currentSession);
       }
       setIsLoading(false);
-    });
+    };
+    initSession();
 
     // 2. Listen for future auth changes (sign in, sign out, token refresh)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
