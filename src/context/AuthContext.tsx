@@ -31,39 +31,45 @@ const supabase = getSupabaseBrowserClient();
 const profileCache = new Map<string, Profile>();
 
 async function fetchProfile(userId: string): Promise<Profile | null> {
-  // Return cached profile if available
-  const cached = profileCache.get(userId);
-  if (cached) return cached;
+  try {
+    // Return cached profile if available
+    const cached = profileCache.get(userId);
+    if (cached) return cached;
 
-  const { data, error } = await supabase
-    .from('profiles')
-    .select('*')
-    .eq('id', userId)
-    .maybeSingle();
-
-  if (error) {
-    console.error('Error fetching profile:', error);
-    return null;
-  }
-
-  if (!data) {
-    const { data: newProfile, error: insertError } = await supabase
+    const { data, error } = await supabase
       .from('profiles')
-      .insert({ id: userId, role: 'admin' })
-      .select()
-      .single();
+      .select('*')
+      .eq('id', userId)
+      .maybeSingle();
 
-    if (insertError) {
-      console.error('Error creating profile:', insertError);
+    if (error) {
+      console.error('Error fetching profile:', error);
       return null;
     }
 
-    profileCache.set(userId, newProfile as Profile);
-    return newProfile as Profile;
-  }
+    if (!data) {
+      // Profile doesn't exist - create one with 'crew' role (admin roles should be set manually)
+      const { data: newProfile, error: insertError } = await supabase
+        .from('profiles')
+        .insert({ id: userId, role: 'crew' })
+        .select()
+        .single();
 
-  profileCache.set(userId, data as Profile);
-  return data as Profile;
+      if (insertError) {
+        console.error('Error creating profile:', insertError);
+        return null;
+      }
+
+      profileCache.set(userId, newProfile as Profile);
+      return newProfile as Profile;
+    }
+
+    profileCache.set(userId, data as Profile);
+    return data as Profile;
+  } catch (err) {
+    console.error('Unexpected error fetching profile:', err);
+    return null;
+  }
 }
 
 function buildAuthUser(supabaseUser: SupabaseUser, profile: Profile | null): AuthUser {
@@ -116,9 +122,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         if (event === 'SIGNED_IN' && newSession?.user) {
           // Update both session and user
-          setSession(newSession);
-          const profile = await fetchProfile(newSession.user.id);
-          setUser(buildAuthUser(newSession.user, profile));
+          try {
+            setSession(newSession);
+            const profile = await fetchProfile(newSession.user.id);
+            setUser(buildAuthUser(newSession.user, profile));
+          } catch (err) {
+            console.error('Error handling SIGNED_IN event:', err);
+            // Still set user with basic info even if profile fetch fails
+            setUser(buildAuthUser(newSession.user, null));
+            setSession(newSession);
+          }
+          setIsLoading(false);
           return;
         }
 
@@ -140,24 +154,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(async (email: string, password: string): Promise<{ success: boolean; error?: string }> => {
     setIsLoading(true);
 
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
 
-    if (error) {
+      if (error) {
+        setIsLoading(false);
+        return { success: false, error: error.message };
+      }
+
+      if (data.user) {
+        const profile = await fetchProfile(data.user.id);
+        setUser(buildAuthUser(data.user, profile));
+        setSession(data.session);
+      }
+
       setIsLoading(false);
-      return { success: false, error: error.message };
+      return { success: true };
+    } catch (err) {
+      console.error('Login error:', err);
+      setIsLoading(false);
+      return { success: false, error: 'An unexpected error occurred. Please try again.' };
     }
-
-    if (data.user) {
-      const profile = await fetchProfile(data.user.id);
-      setUser(buildAuthUser(data.user, profile));
-      setSession(data.session);
-    }
-
-    setIsLoading(false);
-    return { success: true };
   }, []);
 
   const logout = useCallback(async () => {
