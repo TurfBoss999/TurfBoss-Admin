@@ -4,9 +4,13 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { getSupabaseBrowserClient } from '@/lib/supabaseBrowser';
-import { Crew, JobStatus } from '@/types/database';
+import { Crew, JobStatus, Property } from '@/types/database';
 
 const supabase = getSupabaseBrowserClient();
+
+function normalizeAddress(value: string): string {
+  return value.trim().replace(/\s+/g, ' ');
+}
 
 export default function AddJobPage() {
   const router = useRouter();
@@ -24,7 +28,12 @@ export default function AddJobPage() {
   const [estDuration, setEstDuration] = useState('');
   const [crewId, setCrewId] = useState('');
   const [status, setStatus] = useState<JobStatus>('scheduled');
-  const [notes, setNotes] = useState('');
+  const [serviceNotes, setServiceNotes] = useState('');
+
+  // Property linking state
+  const [propertySuggestions, setPropertySuggestions] = useState<Property[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [selectedPropertyId, setSelectedPropertyId] = useState<string | null>(null);
 
   // Image upload state
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
@@ -54,6 +63,88 @@ export default function AddJobPage() {
 
     fetchCrews();
   }, []);
+
+  useEffect(() => {
+    const query = normalizeAddress(address);
+    if (selectedPropertyId || query.length < 3) {
+      setPropertySuggestions([]);
+      return;
+    }
+
+    let cancelled = false;
+    const timeout = setTimeout(async () => {
+      const { data } = await supabase
+        .from('properties')
+        .select('*')
+        .ilike('address', `%${query}%`)
+        .order('address', { ascending: true })
+        .limit(5);
+
+      if (!cancelled) {
+        setPropertySuggestions((data as Property[]) || []);
+      }
+    }, 300);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timeout);
+    };
+  }, [address, selectedPropertyId]);
+
+  function selectPropertySuggestion(property: Property) {
+    setAddress(property.address);
+    setSelectedPropertyId(property.id);
+    setShowSuggestions(false);
+  }
+
+  // Geocodes server-side via /api/admin/geocode so the Google API key never
+  // reaches the browser. A failed geocode is logged server-side and treated
+  // as null coordinates rather than blocking job creation.
+  async function geocodeAddress(rawAddress: string): Promise<{ lat: number | null; lng: number | null }> {
+    try {
+      const response = await fetch('/api/admin/geocode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address: rawAddress }),
+      });
+      const json = await response.json();
+      if (json.success) return json.data;
+    } catch {
+      // Property is still created below, just without coordinates.
+    }
+    return { lat: null, lng: null };
+  }
+
+  // Resolves the property to link this job to: the selected suggestion if
+  // one was picked, otherwise an exact address match if one exists, otherwise
+  // a newly created (and freshly geocoded) property row — mirrors how the
+  // original backfill grouped jobs onto properties by exact address.
+  async function resolvePropertyId(rawAddress: string): Promise<string> {
+    if (selectedPropertyId) return selectedPropertyId;
+
+    const normalized = normalizeAddress(rawAddress);
+
+    const { data: existing, error: lookupError } = await supabase
+      .from('properties')
+      .select('id')
+      .ilike('address', normalized)
+      .limit(1)
+      .maybeSingle();
+
+    if (lookupError) throw lookupError;
+    if (existing) return existing.id;
+
+    const { lat, lng } = await geocodeAddress(normalized);
+
+    const { data: created, error: createError } = await supabase
+      .from('properties')
+      .insert({ address: normalized, lat, lng })
+      .select('id')
+      .single();
+
+    if (createError) throw createError;
+    return created.id;
+  }
 
   function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files || []);
@@ -134,18 +225,21 @@ export default function AddJobPage() {
     try {
       setSubmitting(true);
 
+      const propertyId = await resolvePropertyId(address);
+
       const { data: newJob, error: insertError } = await supabase
         .from('jobs')
         .insert({
           service_type: serviceType.trim(),
           address: address.trim(),
+          property_id: propertyId,
           date,
           time_window_start: timeWindowStart || null,
           time_window_end: timeWindowEnd || null,
           est_duration_min: estDuration ? parseInt(estDuration, 10) : null,
           crew_id: crewId || null,
           status,
-          notes: notes.trim() || null,
+          service_notes: serviceNotes.trim() || null,
         })
         .select()
         .single();
@@ -262,7 +356,7 @@ export default function AddJobPage() {
             </div>
 
             {/* Address */}
-            <div>
+            <div className="relative">
               <label
                 htmlFor="address"
                 className="mb-1 block text-sm font-medium text-gray-700"
@@ -273,25 +367,55 @@ export default function AddJobPage() {
                 id="address"
                 type="text"
                 value={address}
-                onChange={(e) => setAddress(e.target.value)}
+                onChange={(e) => {
+                  setAddress(e.target.value);
+                  setSelectedPropertyId(null);
+                }}
+                onFocus={() => setShowSuggestions(true)}
+                onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
                 placeholder="e.g. 123 Main St, Anytown, USA"
+                autoComplete="off"
                 className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
               />
+              {selectedPropertyId && (
+                <p className="mt-1 text-xs text-green-700">Linked to existing property</p>
+              )}
+              {!selectedPropertyId &&
+                normalizeAddress(address).length >= 3 &&
+                propertySuggestions.length === 0 && (
+                  <p className="mt-1 text-xs text-gray-400">
+                    No match found — a new property will be created for this address
+                  </p>
+                )}
+              {showSuggestions && propertySuggestions.length > 0 && (
+                <div className="absolute z-10 mt-1 w-full overflow-hidden rounded-lg border border-gray-200 bg-white shadow-lg">
+                  {propertySuggestions.map((property) => (
+                    <button
+                      key={property.id}
+                      type="button"
+                      onMouseDown={() => selectPropertySuggestion(property)}
+                      className="block w-full px-4 py-2.5 text-left text-sm text-gray-700 hover:bg-green-50"
+                    >
+                      {property.address}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
-            {/* Notes */}
+            {/* Service Notes */}
             <div>
               <label
-                htmlFor="notes"
+                htmlFor="service-notes"
                 className="mb-1 block text-sm font-medium text-gray-700"
               >
-                Notes
+                Service Notes
               </label>
               <textarea
-                id="notes"
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                placeholder="Any special instructions or notes..."
+                id="service-notes"
+                value={serviceNotes}
+                onChange={(e) => setServiceNotes(e.target.value)}
+                placeholder="Checklist or instructions for the crew..."
                 rows={3}
                 className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
               />

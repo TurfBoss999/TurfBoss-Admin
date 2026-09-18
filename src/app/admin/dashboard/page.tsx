@@ -287,9 +287,9 @@ export default function AdminJobsDashboard() {
                       <div className="max-w-xs truncate text-sm text-gray-900">
                         {job.address}
                       </div>
-                      {job.notes && (
+                      {job.service_notes && (
                         <div className="max-w-xs truncate text-xs text-gray-500">
-                          {job.notes}
+                          {job.service_notes}
                         </div>
                       )}
                     </td>

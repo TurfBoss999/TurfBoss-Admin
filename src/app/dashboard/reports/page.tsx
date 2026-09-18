@@ -173,26 +173,44 @@ export default function ReportsPage() {
 
   // ---- Timesheet KPI with Geofencing ----
   const timesheetStats = useMemo(() => {
-    // Derive timesheet-like data from jobs with est_duration & crew assignments
+    // Real duration in minutes, or null when the job is missing a start
+    // and/or complete timestamp — e.g. it predates this feature, or its
+    // status was set manually from the Admin dashboard rather than through
+    // the crew's own Start/Complete flow. Null jobs are excluded from the
+    // hours math below rather than counted as zero, so they show up as
+    // "no data" instead of silently dragging the averages down.
+    const getActualMinutes = (job: JobWithCrew): number | null => {
+      if (!job.started_at || !job.completed_at) return null;
+      const minutes =
+        (new Date(job.completed_at).getTime() - new Date(job.started_at).getTime()) / 60000;
+      return Math.max(0, minutes);
+    };
+
     const assignedJobs = filteredJobs.filter((j) => j.crew_id);
     const completedAssigned = assignedJobs.filter(
       (j) => j.status === 'completed'
     );
+    const timedAssigned = completedAssigned.filter(
+      (j) => getActualMinutes(j) !== null
+    );
 
-    // Total estimated hours from completed jobs
-    const totalEstMinutes = completedAssigned.reduce(
-      (sum, j) => sum + (j.est_duration_min || 0),
+    // Total actual hours from completed jobs that have real timestamps
+    const totalActualMinutes = timedAssigned.reduce(
+      (sum, j) => sum + (getActualMinutes(j) || 0),
       0
     );
-    const totalEstHours = totalEstMinutes / 60;
+    const totalActualHours = totalActualMinutes / 60;
 
     // Per-crew timesheet breakdown
     const crewTimesheets = crewPerformance.map(({ crew, completed, total }) => {
       const crewCompletedJobs = completedAssigned.filter(
         (j) => j.crew_id === crew.id
       );
-      const crewMinutes = crewCompletedJobs.reduce(
-        (sum, j) => sum + (j.est_duration_min || 0),
+      const crewTimedJobs = crewCompletedJobs.filter(
+        (j) => getActualMinutes(j) !== null
+      );
+      const crewMinutes = crewTimedJobs.reduce(
+        (sum, j) => sum + (getActualMinutes(j) || 0),
         0
       );
       const crewHours = crewMinutes / 60;
@@ -218,11 +236,12 @@ export default function ReportsPage() {
       return {
         crew,
         completedJobs: completed,
+        timedJobs: crewTimedJobs.length,
         totalJobs: total,
         hours: crewHours,
         avgTimePerJob:
-          crewCompletedJobs.length > 0
-            ? crewMinutes / crewCompletedJobs.length
+          crewTimedJobs.length > 0
+            ? crewMinutes / crewTimedJobs.length
             : 0,
         geoCompliance,
         geoTracked,
@@ -240,11 +259,12 @@ export default function ReportsPage() {
         : 0;
 
     return {
-      totalEstHours,
+      totalActualHours,
       completedJobsCount: completedAssigned.length,
+      timedJobsCount: timedAssigned.length,
       avgHoursPerCrew:
         crewPerformance.length > 0
-          ? totalEstHours / crewPerformance.length
+          ? totalActualHours / crewPerformance.length
           : 0,
       overallGeoCompliance,
       allGeoTracked,
@@ -700,11 +720,11 @@ export default function ReportsPage() {
               <span className="text-sm font-medium">Total Hours</span>
             </div>
             <p className="mt-2 text-2xl font-bold text-gray-900">
-              {timesheetStats.totalEstHours.toFixed(1)}
+              {timesheetStats.totalActualHours.toFixed(1)}
               <span className="text-sm font-normal text-gray-500"> hrs</span>
             </p>
             <p className="text-xs text-gray-400">
-              {timesheetStats.completedJobsCount} completed jobs
+              {timesheetStats.timedJobsCount} of {timesheetStats.completedJobsCount} completed jobs timed
             </p>
           </div>
 
@@ -780,7 +800,7 @@ export default function ReportsPage() {
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {timesheetStats.crewTimesheets.map(
-                  ({ crew, hours, completedJobs, avgTimePerJob, geoCompliance, geoTracked }) => (
+                  ({ crew, hours, completedJobs, timedJobs, avgTimePerJob, geoCompliance, geoTracked }) => (
                     <tr key={crew.id} className="hover:bg-gray-50 transition-colors">
                       <td className="py-3 pr-4">
                         <div className="flex items-center space-x-3">
@@ -797,8 +817,17 @@ export default function ReportsPage() {
                           </div>
                         </div>
                       </td>
-                      <td className="py-3 px-4 text-center font-medium text-gray-900">
-                        {hours.toFixed(1)}h
+                      <td className="py-3 px-4 text-center">
+                        <div className="flex flex-col items-center">
+                          <span className="font-medium text-gray-900">
+                            {timedJobs > 0 ? `${hours.toFixed(1)}h` : '—'}
+                          </span>
+                          {completedJobs > 0 && (
+                            <span className="mt-0.5 text-[10px] text-gray-400">
+                              {timedJobs} of {completedJobs} timed
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="py-3 px-4 text-center text-gray-600">
                         {completedJobs}
@@ -863,9 +892,10 @@ export default function ReportsPage() {
             <div className="text-sm text-blue-700">
               <p className="font-medium">How Geofence Tracking Works</p>
               <p className="mt-1 text-blue-600">
-                Jobs with GPS coordinates (lat/lng) are automatically monitored for geofence compliance. 
-                When a crew arrives at or departs from a job site, the system logs the timestamp and verifies 
-                they were within the designated geofence radius. Hours are calculated from estimated job durations.
+                Jobs with GPS coordinates (lat/lng) are automatically monitored for geofence compliance.
+                When a crew arrives at or departs from a job site, the system logs the timestamp and verifies
+                they were within the designated geofence radius. Hours are calculated from the real Start/Complete
+                timestamps a crew logs on each job — jobs without both timestamps are excluded rather than estimated.
               </p>
             </div>
           </div>

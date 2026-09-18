@@ -34,7 +34,7 @@ export default function JobsPage() {
 
         const { data, error: fetchError } = await supabase
           .from('jobs')
-          .select('*, crew:crews(*)')
+          .select('*, crew:crews(*), property:properties(*)')
           .order('date', { ascending: true });
 
         if (cancelled) return;
@@ -54,8 +54,9 @@ export default function JobsPage() {
     return () => { cancelled = true; };
   }, []);
   const filteredJobs = jobs.filter((job) => {
+    const displayAddress = job.property?.address || job.address;
     const matchesSearch =
-      job.address.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      displayAddress.toLowerCase().includes(searchQuery.toLowerCase()) ||
       job.service_type.toLowerCase().includes(searchQuery.toLowerCase());
 
     const matchesStatus =
@@ -192,7 +193,7 @@ export default function JobsPage() {
                         </div>
                         <div className="ml-4">
                           <Link href={`/dashboard/sites/${job.id}`} className="text-sm font-medium text-gray-900 hover:text-green-600">
-                            {job.address}
+                            {job.property?.address || job.address}
                           </Link>
                         </div>
                       </div>
@@ -243,7 +244,7 @@ export default function JobsPage() {
                     </svg>
                   </div>
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium text-gray-900 truncate">{job.address}</p>
+                    <p className="text-sm font-medium text-gray-900 truncate">{job.property?.address || job.address}</p>
                     <p className="mt-0.5 text-xs text-gray-500">{job.service_type}</p>
                   </div>
                 </div>

@@ -17,6 +17,17 @@ export interface Crew {
   truck_number: string | null;
 }
 
+export interface Property {
+  id: string;
+  address: string;
+  lat: number | null;
+  lng: number | null;
+  notes: string | null;
+  overlay_image_url: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Job {
   id: string;
   date: string;
@@ -25,11 +36,15 @@ export interface Job {
   time_window_start: string | null;
   time_window_end: string | null;
   est_duration_min: number | null;
-  notes: string | null;
+  service_notes: string | null;
+  field_notes: string | null;
   lat: number | null;
   lng: number | null;
   crew_id: string | null;
+  property_id: string | null;
   status: JobStatus;
+  started_at: string | null;
+  completed_at: string | null;
   completion_photo_url: string | null;
   image_urls: string[] | null;
   created_at: string;
@@ -38,6 +53,7 @@ export interface Job {
 
 export interface JobWithCrew extends Job {
   crew: Crew | null;
+  property: Property | null;
 }
 
 // API Response types

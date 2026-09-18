@@ -33,13 +33,17 @@ export default function JobDetailPage() {
   // Status update state
   const [updatingStatus, setUpdatingStatus] = useState(false);
 
+  // Property overlay upload state
+  const [uploadingOverlay, setUploadingOverlay] = useState(false);
+  const [overlayError, setOverlayError] = useState<string | null>(null);
+
   // Edit modal state
   const [showEditModal, setShowEditModal] = useState(false);
   const [editForm, setEditForm] = useState({
     service_type: '',
     address: '',
     date: '',
-    notes: '',
+    service_notes: '',
   });
   const [savingEdit, setSavingEdit] = useState(false);
 
@@ -49,7 +53,7 @@ export default function JobDetailPage() {
       service_type: job.service_type || '',
       address: job.address || '',
       date: job.date || '',
-      notes: job.notes || '',
+      service_notes: job.service_notes || '',
     });
     setShowEditModal(true);
   }
@@ -59,17 +63,29 @@ export default function JobDetailPage() {
     try {
       setSavingEdit(true);
 
+      // The property record is the source of truth for the address (it may
+      // be shared across multiple repeat-visit jobs), so an address edit here
+      // updates the linked property rather than just this job's cached copy.
+      if (job.property_id && editForm.address !== job.property?.address) {
+        const { error: propertyError } = await supabase
+          .from('properties')
+          .update({ address: editForm.address, updated_at: new Date().toISOString() })
+          .eq('id', job.property_id);
+
+        if (propertyError) throw propertyError;
+      }
+
       const { data, error: updateError } = await supabase
         .from('jobs')
         .update({
           service_type: editForm.service_type,
           address: editForm.address,
           date: editForm.date,
-          notes: editForm.notes,
+          service_notes: editForm.service_notes,
           updated_at: new Date().toISOString(),
         })
         .eq('id', id)
-        .select('*, crew:crews(*)')
+        .select('*, crew:crews(*), property:properties(*)')
         .single();
 
       if (updateError) throw updateError;
@@ -94,7 +110,7 @@ export default function JobDetailPage() {
         const [jobResult, crewsResult] = await Promise.all([
           supabase
             .from('jobs')
-            .select('*, crew:crews(*)')
+            .select('*, crew:crews(*), property:properties(*)')
             .eq('id', id)
             .single(),
           supabase
@@ -139,7 +155,7 @@ export default function JobDetailPage() {
         .from('jobs')
         .update({ crew_id: crewId, updated_at: new Date().toISOString() })
         .eq('id', id)
-        .select('*, crew:crews(*)')
+        .select('*, crew:crews(*), property:properties(*)')
         .single();
 
       if (updateError) throw updateError;
@@ -162,7 +178,7 @@ export default function JobDetailPage() {
         .from('jobs')
         .update({ status: newStatus, updated_at: new Date().toISOString() })
         .eq('id', id)
-        .select('*, crew:crews(*)')
+        .select('*, crew:crews(*), property:properties(*)')
         .single();
 
       if (updateError) throw updateError;
@@ -172,6 +188,48 @@ export default function JobDetailPage() {
       alert(message);
     } finally {
       setUpdatingStatus(false);
+    }
+  }
+
+  // Uploads a new (or replacement) overlay image for the linked property.
+  // Stored at the property level, not the job, since the same overlay
+  // applies across every repeat-visit job at that address.
+  async function handleOverlayUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file || !job?.property_id) return;
+
+    setOverlayError(null);
+    setUploadingOverlay(true);
+
+    try {
+      const ext = file.name.split('.').pop() || 'jpg';
+      const filePath = `properties/${job.property_id}/overlay-${Date.now()}.${ext}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('job-images')
+        .upload(filePath, file, { cacheControl: '3600', upsert: false });
+
+      if (uploadError) throw uploadError;
+
+      const { data: urlData } = supabase.storage.from('job-images').getPublicUrl(filePath);
+
+      const { error: updateError } = await supabase
+        .from('properties')
+        .update({ overlay_image_url: urlData.publicUrl, updated_at: new Date().toISOString() })
+        .eq('id', job.property_id);
+
+      if (updateError) throw updateError;
+
+      setJob((prev) =>
+        prev && prev.property
+          ? { ...prev, property: { ...prev.property, overlay_image_url: urlData.publicUrl } }
+          : prev
+      );
+    } catch (err) {
+      setOverlayError(err instanceof Error ? err.message : 'Failed to upload overlay image');
+    } finally {
+      setUploadingOverlay(false);
     }
   }
 
@@ -291,7 +349,12 @@ export default function JobDetailPage() {
               </div>
               <div className="sm:col-span-2">
                 <label className="block text-sm font-medium text-gray-500">Address</label>
-                <p className="mt-1 text-gray-900">{job.address}</p>
+                <p className="mt-1 text-gray-900">{job.property?.address || job.address}</p>
+                {job.property && job.property.lat != null && job.property.lng != null && (
+                  <p className="mt-0.5 text-xs text-gray-400">
+                    {job.property.lat.toFixed(5)}, {job.property.lng.toFixed(5)}
+                  </p>
+                )}
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-500">Date</label>
@@ -317,11 +380,71 @@ export default function JobDetailPage() {
             </div>
           </div>
 
-          {/* Notes Card */}
-          {job.notes && (
+          {/* Property Overlay Card */}
+          {job.property && (
             <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
-              <h2 className="text-lg font-semibold text-gray-900 mb-4">Notes</h2>
-              <p className="text-gray-700 whitespace-pre-wrap">{job.notes}</p>
+              <div className="mb-4 flex items-center justify-between">
+                <h2 className="text-lg font-semibold text-gray-900">Property Overlay</h2>
+                <label
+                  className={`cursor-pointer text-sm font-medium ${
+                    uploadingOverlay
+                      ? 'text-gray-400'
+                      : 'text-green-600 hover:text-green-700'
+                  }`}
+                >
+                  {uploadingOverlay
+                    ? 'Uploading...'
+                    : job.property.overlay_image_url
+                      ? 'Replace'
+                      : 'Upload'}
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp"
+                    disabled={uploadingOverlay}
+                    onChange={handleOverlayUpload}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+
+              {job.property.overlay_image_url ? (
+                <a
+                  href={job.property.overlay_image_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block aspect-video overflow-hidden rounded-lg border border-gray-200"
+                >
+                  <img
+                    src={job.property.overlay_image_url}
+                    alt="Property overlay"
+                    className="h-full w-full object-cover"
+                  />
+                </a>
+              ) : (
+                <div className="flex aspect-video items-center justify-center rounded-lg border-2 border-dashed border-gray-200 text-sm text-gray-400">
+                  No overlay image uploaded yet
+                </div>
+              )}
+
+              {overlayError && (
+                <p className="mt-2 text-sm text-red-600">{overlayError}</p>
+              )}
+            </div>
+          )}
+
+          {/* Service Notes Card (office-entered, editable via Edit Job) */}
+          {job.service_notes && (
+            <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
+              <h2 className="text-lg font-semibold text-gray-900 mb-4">Service Notes</h2>
+              <p className="text-gray-700 whitespace-pre-wrap">{job.service_notes}</p>
+            </div>
+          )}
+
+          {/* Field Notes Card (crew-submitted issue reports & notes) */}
+          {job.field_notes && (
+            <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
+              <h2 className="text-lg font-semibold text-gray-900 mb-4">Field Notes</h2>
+              <p className="text-gray-700 whitespace-pre-wrap">{job.field_notes}</p>
             </div>
           )}
 
@@ -559,13 +682,13 @@ export default function JobDetailPage() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Service Notes</label>
                 <textarea
-                  value={editForm.notes}
-                  onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })}
+                  value={editForm.service_notes}
+                  onChange={(e) => setEditForm({ ...editForm, service_notes: e.target.value })}
                   rows={3}
                   className="w-full rounded-lg border border-gray-300 px-4 py-2 text-gray-900 focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
-                  placeholder="Additional notes..."
+                  placeholder="Checklist or instructions for the crew..."
                 />
               </div>
             </div>
