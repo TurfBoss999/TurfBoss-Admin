@@ -62,7 +62,7 @@ export async function POST(
         time_window_start: body.time_window_start || null,
         time_window_end: body.time_window_end || null,
         est_duration_min: body.est_duration_min || null,
-        notes: body.notes || null,
+        service_notes: body.service_notes || null,
         lat: body.lat || null,
         lng: body.lng || null,
         crew_id: body.crew_id || null,

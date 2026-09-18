@@ -73,7 +73,7 @@ export async function PUT(
     if (body.time_window_start !== undefined) updateData.time_window_start = body.time_window_start;
     if (body.time_window_end !== undefined) updateData.time_window_end = body.time_window_end;
     if (body.est_duration_min !== undefined) updateData.est_duration_min = body.est_duration_min;
-    if (body.notes !== undefined) updateData.notes = body.notes;
+    if (body.service_notes !== undefined) updateData.service_notes = body.service_notes;
     if (body.lat !== undefined) updateData.lat = body.lat;
     if (body.lng !== undefined) updateData.lng = body.lng;
     if (body.crew_id !== undefined) updateData.crew_id = body.crew_id;

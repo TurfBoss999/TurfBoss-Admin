@@ -77,7 +77,7 @@ export interface CreateJobDto {
   time_window_start?: string;
   time_window_end?: string;
   est_duration_min?: number;
-  notes?: string;
+  service_notes?: string;
   lat?: number;
   lng?: number;
   crew_id?: string;
@@ -92,7 +92,7 @@ export interface UpdateJobDto {
   time_window_start?: string;
   time_window_end?: string;
   est_duration_min?: number;
-  notes?: string;
+  service_notes?: string;
   lat?: number;
   lng?: number;
   crew_id?: string;
