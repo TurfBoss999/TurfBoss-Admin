@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { getSupabaseBrowserClient } from '@/lib/supabaseBrowser';
-import { JobWithCrew } from '@/types/database';
+import { JobWithCrew, SERVICE_TYPE_LABELS } from '@/types/database';
 import StatusBadge from '@/components/StatusBadge';
 import Link from 'next/link';
 
@@ -106,7 +106,7 @@ export default function TasksPage() {
                     </svg>
                   </div>
                   <div>
-                    <p className="font-medium text-gray-900">{job.service_type}</p>
+                    <p className="font-medium text-gray-900">{SERVICE_TYPE_LABELS[job.service_type]}</p>
                     <p className="text-sm text-gray-500">{job.address}</p>
                     <p className="text-xs text-gray-400">
                       {new Date(job.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}

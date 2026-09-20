@@ -4,7 +4,9 @@ import { useState, useEffect } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import Link from 'next/link';
 import { getSupabaseBrowserClient } from '@/lib/supabaseBrowser';
-import { JobWithCrew, JobStatus, Crew } from '@/types/database';
+import { JobWithCrew, JobStatus, Crew, ServiceType, SERVICE_TYPE_LABELS } from '@/types/database';
+
+const ALL_SERVICE_TYPES: ServiceType[] = ['salt_lot', 'plow_lot', 'salt_walk', 'shovel_walks'];
 import StatusBadge from '@/components/StatusBadge';
 
 const STATUS_DISPLAY: Record<JobStatus, string> = {
@@ -25,6 +27,10 @@ export default function JobDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Other services scheduled at the same property on the same date — this
+  // job's "visit siblings", now that a visit is N separate job rows.
+  const [siblingJobs, setSiblingJobs] = useState<JobWithCrew[]>([]);
+
   // Crew assignment state
   const [crews, setCrews] = useState<Crew[]>([]);
   const [showCrewPicker, setShowCrewPicker] = useState(false);
@@ -32,6 +38,7 @@ export default function JobDetailPage() {
 
   // Status update state
   const [updatingStatus, setUpdatingStatus] = useState(false);
+  const [updatingSkidSteer, setUpdatingSkidSteer] = useState(false);
 
   // Property overlay upload state
   const [uploadingOverlay, setUploadingOverlay] = useState(false);
@@ -39,8 +46,13 @@ export default function JobDetailPage() {
 
   // Edit modal state
   const [showEditModal, setShowEditModal] = useState(false);
-  const [editForm, setEditForm] = useState({
-    service_type: '',
+  const [editForm, setEditForm] = useState<{
+    service_type: ServiceType;
+    address: string;
+    date: string;
+    service_notes: string;
+  }>({
+    service_type: 'salt_lot',
     address: '',
     date: '',
     service_notes: '',
@@ -50,7 +62,7 @@ export default function JobDetailPage() {
   function openEditModal() {
     if (!job) return;
     setEditForm({
-      service_type: job.service_type || '',
+      service_type: job.service_type,
       address: job.address || '',
       date: job.date || '',
       service_notes: job.service_notes || '',
@@ -147,6 +159,30 @@ export default function JobDetailPage() {
     return () => { cancelled = true; };
   }, [id]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function fetchSiblings() {
+      if (!job?.property_id || !job.date) {
+        setSiblingJobs([]);
+        return;
+      }
+
+      const { data } = await supabase
+        .from('jobs')
+        .select('*, crew:crews(*)')
+        .eq('property_id', job.property_id)
+        .eq('date', job.date)
+        .neq('id', job.id)
+        .order('service_type', { ascending: true });
+
+      if (!cancelled) setSiblingJobs((data as JobWithCrew[]) || []);
+    }
+
+    fetchSiblings();
+    return () => { cancelled = true; };
+  }, [job?.property_id, job?.date, job?.id]);
+
   async function handleAssignCrew(crewId: string | null) {
     try {
       setAssigningCrew(true);
@@ -188,6 +224,28 @@ export default function JobDetailPage() {
       alert(message);
     } finally {
       setUpdatingStatus(false);
+    }
+  }
+
+  async function handleSkidSteerToggle(used: boolean) {
+    if (!job) return;
+    try {
+      setUpdatingSkidSteer(true);
+
+      const { data, error: updateError } = await supabase
+        .from('jobs')
+        .update({ skid_steer_used: used, updated_at: new Date().toISOString() })
+        .eq('id', id)
+        .select('*, crew:crews(*), property:properties(*)')
+        .single();
+
+      if (updateError) throw updateError;
+      setJob(data as JobWithCrew);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to update skid steer flag';
+      alert(message);
+    } finally {
+      setUpdatingSkidSteer(false);
     }
   }
 
@@ -287,7 +345,7 @@ export default function JobDetailPage() {
         <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
         </svg>
-        <span className="text-gray-900">{job.service_type}</span>
+        <span className="text-gray-900">{SERVICE_TYPE_LABELS[job.service_type]}</span>
       </nav>
 
       {/* Header */}
@@ -301,7 +359,7 @@ export default function JobDetailPage() {
           </div>
           <div>
             <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-              <h1 className="text-xl sm:text-2xl font-bold text-gray-900">{job.service_type}</h1>
+              <h1 className="text-xl sm:text-2xl font-bold text-gray-900">{SERVICE_TYPE_LABELS[job.service_type]}</h1>
               <StatusBadge status={statusDisplay} />
             </div>
             <p className="mt-1 text-sm sm:text-base text-gray-500">{job.address}</p>
@@ -339,7 +397,7 @@ export default function JobDetailPage() {
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
                 <label className="block text-sm font-medium text-gray-500">Service Type</label>
-                <p className="mt-1 text-gray-900">{job.service_type}</p>
+                <p className="mt-1 text-gray-900">{SERVICE_TYPE_LABELS[job.service_type]}</p>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-500">Status</label>
@@ -347,6 +405,21 @@ export default function JobDetailPage() {
                   <StatusBadge status={statusDisplay} />
                 </div>
               </div>
+              {job.service_type === 'plow_lot' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-500">Skid Steer Used</label>
+                  <label className="mt-1 flex cursor-pointer items-center space-x-2 text-sm text-gray-900">
+                    <input
+                      type="checkbox"
+                      checked={job.skid_steer_used}
+                      disabled={updatingSkidSteer}
+                      onChange={(e) => handleSkidSteerToggle(e.target.checked)}
+                      className="h-4 w-4 rounded border-gray-300 text-green-600 focus:ring-green-500"
+                    />
+                    <span>{job.skid_steer_used ? 'Yes' : 'No'}</span>
+                  </label>
+                </div>
+              )}
               <div className="sm:col-span-2">
                 <label className="block text-sm font-medium text-gray-500">Address</label>
                 <p className="mt-1 text-gray-900">{job.property?.address || job.address}</p>
@@ -379,6 +452,42 @@ export default function JobDetailPage() {
               </div>
             </div>
           </div>
+
+          {/* Other Services at This Visit */}
+          {siblingJobs.length > 0 && (
+            <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
+              <h2 className="text-lg font-semibold text-gray-900 mb-4">
+                Other Services at This Visit
+              </h2>
+              <div className="space-y-2">
+                {siblingJobs.map((sibling) => (
+                  <Link
+                    key={sibling.id}
+                    href={`/dashboard/sites/${sibling.id}`}
+                    className="flex items-center justify-between rounded-lg border border-gray-100 px-4 py-3 hover:bg-gray-50 transition-colors"
+                  >
+                    <div>
+                      <p className="text-sm font-medium text-gray-900">
+                        {SERVICE_TYPE_LABELS[sibling.service_type]}
+                      </p>
+                      <p className="text-xs text-gray-500">
+                        {sibling.crew?.name || 'Unassigned'}
+                      </p>
+                    </div>
+                    <StatusBadge
+                      status={
+                        sibling.status === 'in_progress'
+                          ? 'In Progress'
+                          : sibling.status === 'scheduled'
+                            ? 'Pending'
+                            : 'Completed'
+                      }
+                    />
+                  </Link>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Property Overlay Card */}
           {job.property && (
@@ -651,13 +760,17 @@ export default function JobDetailPage() {
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Service Type</label>
-                <input
-                  type="text"
+                <select
                   value={editForm.service_type}
-                  onChange={(e) => setEditForm({ ...editForm, service_type: e.target.value })}
+                  onChange={(e) => setEditForm({ ...editForm, service_type: e.target.value as ServiceType })}
                   className="w-full rounded-lg border border-gray-300 px-4 py-2 text-gray-900 focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
-                  placeholder="e.g., Snow Removal"
-                />
+                >
+                  {ALL_SERVICE_TYPES.map((type) => (
+                    <option key={type} value={type}>
+                      {SERVICE_TYPE_LABELS[type]}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div>

@@ -4,7 +4,9 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { getSupabaseBrowserClient } from '@/lib/supabaseBrowser';
-import { Crew, JobStatus, Property } from '@/types/database';
+import { Crew, JobStatus, Property, ServiceType, SERVICE_TYPE_LABELS } from '@/types/database';
+
+const ALL_SERVICE_TYPES: ServiceType[] = ['salt_lot', 'plow_lot', 'salt_walk', 'shovel_walks'];
 
 const supabase = getSupabaseBrowserClient();
 
@@ -20,7 +22,8 @@ export default function AddJobPage() {
   const [loadingCrews, setLoadingCrews] = useState(true);
 
   // Form fields
-  const [serviceType, setServiceType] = useState('Snow Removal');
+  const [selectedServices, setSelectedServices] = useState<ServiceType[]>([]);
+  const [skidSteerUsed, setSkidSteerUsed] = useState(false);
   const [address, setAddress] = useState('');
   const [date, setDate] = useState('');
   const [timeWindowStart, setTimeWindowStart] = useState('');
@@ -29,6 +32,12 @@ export default function AddJobPage() {
   const [crewId, setCrewId] = useState('');
   const [status, setStatus] = useState<JobStatus>('scheduled');
   const [serviceNotes, setServiceNotes] = useState('');
+
+  function toggleService(type: ServiceType) {
+    setSelectedServices((prev) =>
+      prev.includes(type) ? prev.filter((t) => t !== type) : [...prev, type]
+    );
+  }
 
   // Property linking state
   const [propertySuggestions, setPropertySuggestions] = useState<Property[]>([]);
@@ -209,8 +218,8 @@ export default function AddJobPage() {
     setFormError(null);
 
     // Validate required fields
-    if (!serviceType.trim()) {
-      setFormError('Service type is required');
+    if (selectedServices.length === 0) {
+      setFormError('Select at least one service');
       return;
     }
     if (!address.trim()) {
@@ -227,34 +236,41 @@ export default function AddJobPage() {
 
       const propertyId = await resolvePropertyId(address);
 
-      const { data: newJob, error: insertError } = await supabase
+      // One job row per selected service, sharing this same visit's
+      // property/date/crew/schedule — matches the paper tracking sheet's
+      // per-service columns rather than one row per property visit.
+      const { data: newJobs, error: insertError } = await supabase
         .from('jobs')
-        .insert({
-          service_type: serviceType.trim(),
-          address: address.trim(),
-          property_id: propertyId,
-          date,
-          time_window_start: timeWindowStart || null,
-          time_window_end: timeWindowEnd || null,
-          est_duration_min: estDuration ? parseInt(estDuration, 10) : null,
-          crew_id: crewId || null,
-          status,
-          service_notes: serviceNotes.trim() || null,
-        })
-        .select()
-        .single();
+        .insert(
+          selectedServices.map((serviceType) => ({
+            service_type: serviceType,
+            address: address.trim(),
+            property_id: propertyId,
+            date,
+            time_window_start: timeWindowStart || null,
+            time_window_end: timeWindowEnd || null,
+            est_duration_min: estDuration ? parseInt(estDuration, 10) : null,
+            crew_id: crewId || null,
+            status,
+            service_notes: serviceNotes.trim() || null,
+            skid_steer_used: serviceType === 'plow_lot' ? skidSteerUsed : false,
+          }))
+        )
+        .select();
 
       if (insertError) throw insertError;
 
-      // Upload images if any were selected
-      if (selectedFiles.length > 0 && newJob) {
-        const imageUrls = await uploadImages(newJob.id);
+      // Upload images if any were selected — attached to just the first
+      // created job rather than duplicated across every service.
+      const primaryJob = newJobs?.[0];
+      if (selectedFiles.length > 0 && primaryJob) {
+        const imageUrls = await uploadImages(primaryJob.id);
 
         if (imageUrls.length > 0) {
           const { error: updateError } = await supabase
             .from('jobs')
             .update({ image_urls: imageUrls })
-            .eq('id', newJob.id);
+            .eq('id', primaryJob.id);
 
           if (updateError) {
             console.error('Failed to save image URLs:', updateError);
@@ -272,10 +288,6 @@ export default function AddJobPage() {
       setSubmitting(false);
     }
   }
-
-  const SERVICE_TYPES = [
-    'Snow Removal',
-  ];
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -334,25 +346,43 @@ export default function AddJobPage() {
           <div className="space-y-4">
             {/* Service Type */}
             <div>
-              <label
-                htmlFor="service-type"
-                className="mb-1 block text-sm font-medium text-gray-700"
-              >
-                Service Type <span className="text-red-500">*</span>
+              <label className="mb-1 block text-sm font-medium text-gray-700">
+                Services <span className="text-red-500">*</span>
               </label>
-              <select
-                id="service-type"
-                value={serviceType}
-                onChange={(e) => setServiceType(e.target.value)}
-                className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
-              >
-                <option value="">Select a service type...</option>
-                {SERVICE_TYPES.map((type) => (
-                  <option key={type} value={type}>
-                    {type}
-                  </option>
+              <p className="mb-2 text-xs text-gray-400">
+                One job is created per service selected, each independently tracked.
+              </p>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {ALL_SERVICE_TYPES.map((type) => (
+                  <label
+                    key={type}
+                    className={`flex cursor-pointer items-center space-x-2 rounded-lg border px-3 py-2.5 text-sm transition-colors ${
+                      selectedServices.includes(type)
+                        ? 'border-green-500 bg-green-50 text-green-800'
+                        : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedServices.includes(type)}
+                      onChange={() => toggleService(type)}
+                      className="h-4 w-4 rounded border-gray-300 text-green-600 focus:ring-green-500"
+                    />
+                    <span>{SERVICE_TYPE_LABELS[type]}</span>
+                  </label>
                 ))}
-              </select>
+              </div>
+              {selectedServices.includes('plow_lot') && (
+                <label className="mt-3 flex cursor-pointer items-center space-x-2 text-sm text-gray-700">
+                  <input
+                    type="checkbox"
+                    checked={skidSteerUsed}
+                    onChange={(e) => setSkidSteerUsed(e.target.checked)}
+                    className="h-4 w-4 rounded border-gray-300 text-green-600 focus:ring-green-500"
+                  />
+                  <span>Skid steer used (Plow Lot)</span>
+                </label>
+              )}
             </div>
 
             {/* Address */}

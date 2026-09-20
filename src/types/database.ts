@@ -4,6 +4,15 @@ export type UserRole = 'admin' | 'crew';
 
 export type JobStatus = 'scheduled' | 'in_progress' | 'completed' | 'cancelled';
 
+export type ServiceType = 'salt_lot' | 'plow_lot' | 'salt_walk' | 'shovel_walks';
+
+export const SERVICE_TYPE_LABELS: Record<ServiceType, string> = {
+  salt_lot: 'Salt Lot',
+  plow_lot: 'Plow Lot',
+  salt_walk: 'Salt Walk',
+  shovel_walks: 'Shovel Walks',
+};
+
 export interface Profile {
   id: string;
   role: UserRole;
@@ -32,7 +41,7 @@ export interface Job {
   id: string;
   date: string;
   address: string;
-  service_type: string;
+  service_type: ServiceType;
   time_window_start: string | null;
   time_window_end: string | null;
   est_duration_min: number | null;
@@ -47,6 +56,7 @@ export interface Job {
   completed_at: string | null;
   completion_photo_url: string | null;
   image_urls: string[] | null;
+  skid_steer_used: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -73,7 +83,7 @@ export type ApiResponse<T> = ApiSuccessResponse<T> | ApiErrorResponse;
 export interface CreateJobDto {
   date: string;
   address: string;
-  service_type: string;
+  service_type: ServiceType;
   time_window_start?: string;
   time_window_end?: string;
   est_duration_min?: number;
@@ -88,7 +98,7 @@ export interface CreateJobDto {
 export interface UpdateJobDto {
   date?: string;
   address?: string;
-  service_type?: string;
+  service_type?: ServiceType;
   time_window_start?: string;
   time_window_end?: string;
   est_duration_min?: number;

@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { StatCard } from '@/components';
 import { getSupabaseBrowserClient } from '@/lib/supabaseBrowser';
-import { JobWithCrew, Crew } from '@/types/database';
+import { JobWithCrew, Crew, SERVICE_TYPE_LABELS } from '@/types/database';
 import StatusBadge from '@/components/StatusBadge';
 import Link from 'next/link';
 
@@ -164,7 +164,7 @@ export default function DashboardPage() {
                       </svg>
                     </div>
                     <div>
-                      <p className="text-sm font-medium text-gray-900">{job.service_type}</p>
+                      <p className="text-sm font-medium text-gray-900">{SERVICE_TYPE_LABELS[job.service_type]}</p>
                       <p className="text-xs text-gray-500 truncate max-w-[150px] sm:max-w-[200px]">{job.address}</p>
                     </div>
                   </div>
@@ -200,7 +200,7 @@ export default function DashboardPage() {
                       </svg>
                     </div>
                     <div>
-                      <p className="text-sm font-medium text-gray-900">{job.service_type}</p>
+                      <p className="text-sm font-medium text-gray-900">{SERVICE_TYPE_LABELS[job.service_type]}</p>
                       <p className="text-xs text-gray-500">{job.crew?.name || 'Unassigned'}</p>
                     </div>
                   </div>

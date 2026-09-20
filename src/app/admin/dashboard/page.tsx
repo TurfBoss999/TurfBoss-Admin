@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import adminApi from '@/services/adminApi';
-import { JobWithCrew, Crew, JobStatus } from '@/types/database';
+import { JobWithCrew, Crew, JobStatus, SERVICE_TYPE_LABELS } from '@/types/database';
 
 const STATUS_OPTIONS: { value: JobStatus; label: string }[] = [
   { value: 'scheduled', label: 'Scheduled' },
@@ -294,7 +294,7 @@ export default function AdminJobsDashboard() {
                       )}
                     </td>
                     <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-900">
-                      {job.service_type}
+                      {SERVICE_TYPE_LABELS[job.service_type]}
                     </td>
                     <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500">
                       {formatTime(job.time_window_start)} - {formatTime(job.time_window_end)}
