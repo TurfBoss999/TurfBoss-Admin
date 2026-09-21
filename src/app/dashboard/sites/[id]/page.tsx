@@ -4,7 +4,13 @@ import { useState, useEffect } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import Link from 'next/link';
 import { getSupabaseBrowserClient } from '@/lib/supabaseBrowser';
-import { JobWithCrew, JobStatus, Crew, ServiceType, SERVICE_TYPE_LABELS } from '@/types/database';
+import { JobWithCrew, JobStatus, Crew, ServiceType, SERVICE_TYPE_LABELS, JobPhoto, PhotoType } from '@/types/database';
+
+const PHOTO_TYPE_LABELS: Record<PhotoType, string> = {
+  before: 'Before',
+  after: 'After',
+  issue: 'Issue',
+};
 
 const ALL_SERVICE_TYPES: ServiceType[] = ['salt_lot', 'plow_lot', 'salt_walk', 'shovel_walks'];
 import StatusBadge from '@/components/StatusBadge';
@@ -30,6 +36,8 @@ export default function JobDetailPage() {
   // Other services scheduled at the same property on the same date — this
   // job's "visit siblings", now that a visit is N separate job rows.
   const [siblingJobs, setSiblingJobs] = useState<JobWithCrew[]>([]);
+
+  const [jobPhotos, setJobPhotos] = useState<JobPhoto[]>([]);
 
   // Crew assignment state
   const [crews, setCrews] = useState<Crew[]>([]);
@@ -140,7 +148,7 @@ export default function JobDetailPage() {
         setLoading(true);
         setError(null);
 
-        const [jobResult, crewsResult] = await Promise.all([
+        const [jobResult, crewsResult, photosResult] = await Promise.all([
           supabase
             .from('jobs')
             .select('*, crew:crews(*), property:properties(*)')
@@ -150,6 +158,11 @@ export default function JobDetailPage() {
             .from('crews')
             .select('*')
             .order('name', { ascending: true }),
+          supabase
+            .from('job_photos')
+            .select('*')
+            .eq('job_id', id)
+            .order('uploaded_at', { ascending: true }),
         ]);
 
         if (cancelled) return;
@@ -157,6 +170,8 @@ export default function JobDetailPage() {
         if (crewsResult.data) {
           setCrews(crewsResult.data as Crew[]);
         }
+
+        setJobPhotos((photosResult.data as JobPhoto[]) || []);
 
         if (jobResult.error) {
           if (jobResult.error.code === 'PGRST116') {
@@ -638,6 +653,44 @@ export default function JobDetailPage() {
                     </div>
                   </a>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {/* Field Photos Card (before/after/issue, one shared system) */}
+          {jobPhotos.length > 0 && (
+            <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
+              <h2 className="text-lg font-semibold text-gray-900 mb-4">Field Photos</h2>
+              <div className="space-y-5">
+                {(['before', 'after', 'issue'] as PhotoType[]).map((type) => {
+                  const photos = jobPhotos.filter((p) => p.photo_type === type);
+                  if (photos.length === 0) return null;
+                  return (
+                    <div key={type}>
+                      <h3 className="mb-2 text-sm font-medium text-gray-500">
+                        {PHOTO_TYPE_LABELS[type]} ({photos.length})
+                      </h3>
+                      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                        {photos.map((photo) => (
+                          <a
+                            key={photo.id}
+                            href={photo.photo_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="group relative aspect-square overflow-hidden rounded-lg border border-gray-200"
+                          >
+                            <img
+                              src={photo.photo_url}
+                              alt={`${PHOTO_TYPE_LABELS[type]} photo`}
+                              className="h-full w-full object-cover transition-transform group-hover:scale-105"
+                            />
+                            <div className="absolute inset-0 bg-black/0 transition-colors group-hover:bg-black/10" />
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}

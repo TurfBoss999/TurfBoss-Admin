@@ -68,6 +68,17 @@ export interface JobWithCrew extends Job {
   property: Property | null;
 }
 
+export type PhotoType = 'before' | 'after' | 'issue';
+
+export interface JobPhoto {
+  id: string;
+  job_id: string;
+  photo_url: string;
+  photo_type: PhotoType;
+  uploaded_at: string;
+  uploaded_by: string | null;
+}
+
 // API Response types
 export interface ApiSuccessResponse<T> {
   success: true;
