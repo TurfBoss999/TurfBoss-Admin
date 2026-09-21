@@ -51,11 +51,15 @@ export default function JobDetailPage() {
     address: string;
     date: string;
     service_notes: string;
+    client_name: string;
+    client_email: string;
   }>({
     service_type: 'salt_lot',
     address: '',
     date: '',
     service_notes: '',
+    client_name: '',
+    client_email: '',
   });
   const [savingEdit, setSavingEdit] = useState(false);
 
@@ -66,6 +70,8 @@ export default function JobDetailPage() {
       address: job.address || '',
       date: job.date || '',
       service_notes: job.service_notes || '',
+      client_name: job.property?.client_name || '',
+      client_email: job.property?.client_email || '',
     });
     setShowEditModal(true);
   }
@@ -75,16 +81,31 @@ export default function JobDetailPage() {
     try {
       setSavingEdit(true);
 
-      // The property record is the source of truth for the address (it may
-      // be shared across multiple repeat-visit jobs), so an address edit here
-      // updates the linked property rather than just this job's cached copy.
-      if (job.property_id && editForm.address !== job.property?.address) {
-        const { error: propertyError } = await supabase
-          .from('properties')
-          .update({ address: editForm.address, updated_at: new Date().toISOString() })
-          .eq('id', job.property_id);
+      // The property record is the source of truth for address and client
+      // contact info (it may be shared across multiple repeat-visit jobs),
+      // so those edits here update the linked property rather than just
+      // this job's cached copy.
+      if (job.property_id) {
+        const propertyUpdate: Record<string, string | null> = {};
 
-        if (propertyError) throw propertyError;
+        if (editForm.address !== job.property?.address) {
+          propertyUpdate.address = editForm.address;
+        }
+        if (editForm.client_name !== (job.property?.client_name || '')) {
+          propertyUpdate.client_name = editForm.client_name.trim() || null;
+        }
+        if (editForm.client_email !== (job.property?.client_email || '')) {
+          propertyUpdate.client_email = editForm.client_email.trim() || null;
+        }
+
+        if (Object.keys(propertyUpdate).length > 0) {
+          const { error: propertyError } = await supabase
+            .from('properties')
+            .update({ ...propertyUpdate, updated_at: new Date().toISOString() })
+            .eq('id', job.property_id);
+
+          if (propertyError) throw propertyError;
+        }
       }
 
       const { data, error: updateError } = await supabase
@@ -453,6 +474,38 @@ export default function JobDetailPage() {
             </div>
           </div>
 
+          {/* Client Info Card */}
+          <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
+            <h2 className="text-lg font-semibold text-gray-900 mb-4">Client Info</h2>
+            {job.property?.client_name || job.property?.client_email ? (
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="block text-sm font-medium text-gray-500">Name</label>
+                  <p className="mt-1 text-gray-900">{job.property?.client_name || '—'}</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-500">Email</label>
+                  <p className="mt-1 text-gray-900">
+                    {job.property?.client_email ? (
+                      <a href={`mailto:${job.property.client_email}`} className="text-green-600 hover:text-green-700">
+                        {job.property.client_email}
+                      </a>
+                    ) : (
+                      '—'
+                    )}
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <p className="text-sm text-gray-400">
+                No client info on file yet.{' '}
+                <button onClick={openEditModal} className="text-green-600 hover:text-green-700 font-medium">
+                  Add it
+                </button>
+              </p>
+            )}
+          </div>
+
           {/* Other Services at This Visit */}
           {siblingJobs.length > 0 && (
             <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
@@ -791,6 +844,28 @@ export default function JobDetailPage() {
                   value={editForm.date}
                   onChange={(e) => setEditForm({ ...editForm, date: e.target.value })}
                   className="w-full rounded-lg border border-gray-300 px-4 py-2 text-gray-900 focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Client Name</label>
+                <input
+                  type="text"
+                  value={editForm.client_name}
+                  onChange={(e) => setEditForm({ ...editForm, client_name: e.target.value })}
+                  className="w-full rounded-lg border border-gray-300 px-4 py-2 text-gray-900 focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
+                  placeholder="e.g. Jane Smith"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Client Email</label>
+                <input
+                  type="email"
+                  value={editForm.client_email}
+                  onChange={(e) => setEditForm({ ...editForm, client_email: e.target.value })}
+                  className="w-full rounded-lg border border-gray-300 px-4 py-2 text-gray-900 focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
+                  placeholder="e.g. jane@example.com"
                 />
               </div>
 

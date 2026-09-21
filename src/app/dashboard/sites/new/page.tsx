@@ -43,6 +43,8 @@ export default function AddJobPage() {
   const [propertySuggestions, setPropertySuggestions] = useState<Property[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [selectedPropertyId, setSelectedPropertyId] = useState<string | null>(null);
+  const [clientName, setClientName] = useState('');
+  const [clientEmail, setClientEmail] = useState('');
 
   // Image upload state
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
@@ -103,6 +105,8 @@ export default function AddJobPage() {
   function selectPropertySuggestion(property: Property) {
     setAddress(property.address);
     setSelectedPropertyId(property.id);
+    setClientName(property.client_name || '');
+    setClientEmail(property.client_email || '');
     setShowSuggestions(false);
   }
 
@@ -129,7 +133,10 @@ export default function AddJobPage() {
   // a newly created (and freshly geocoded) property row — mirrors how the
   // original backfill grouped jobs onto properties by exact address.
   async function resolvePropertyId(rawAddress: string): Promise<string> {
-    if (selectedPropertyId) return selectedPropertyId;
+    if (selectedPropertyId) {
+      await applyClientInfo(selectedPropertyId);
+      return selectedPropertyId;
+    }
 
     const normalized = normalizeAddress(rawAddress);
 
@@ -141,18 +148,47 @@ export default function AddJobPage() {
       .maybeSingle();
 
     if (lookupError) throw lookupError;
-    if (existing) return existing.id;
+    if (existing) {
+      await applyClientInfo(existing.id);
+      return existing.id;
+    }
 
     const { lat, lng } = await geocodeAddress(normalized);
 
     const { data: created, error: createError } = await supabase
       .from('properties')
-      .insert({ address: normalized, lat, lng })
+      .insert({
+        address: normalized,
+        lat,
+        lng,
+        client_name: clientName.trim() || null,
+        client_email: clientEmail.trim() || null,
+      })
       .select('id')
       .single();
 
     if (createError) throw createError;
     return created.id;
+  }
+
+  // Writes client contact info onto an already-existing property — covers
+  // both filling in a legacy property with no contact on file yet, and
+  // correcting/updating one that already has it. A no-op when both fields
+  // are empty, so re-submitting an unrelated job never blanks out a
+  // property's existing contact info.
+  async function applyClientInfo(propertyId: string) {
+    if (!clientName.trim() && !clientEmail.trim()) return;
+
+    const { error } = await supabase
+      .from('properties')
+      .update({
+        client_name: clientName.trim() || null,
+        client_email: clientEmail.trim() || null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', propertyId);
+
+    if (error) throw error;
   }
 
   function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
@@ -431,6 +467,42 @@ export default function AddJobPage() {
                   ))}
                 </div>
               )}
+            </div>
+
+            {/* Client Contact Info */}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <label
+                  htmlFor="client-name"
+                  className="mb-1 block text-sm font-medium text-gray-700"
+                >
+                  Client Name
+                </label>
+                <input
+                  id="client-name"
+                  type="text"
+                  value={clientName}
+                  onChange={(e) => setClientName(e.target.value)}
+                  placeholder="e.g. Jane Smith"
+                  className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
+                />
+              </div>
+              <div>
+                <label
+                  htmlFor="client-email"
+                  className="mb-1 block text-sm font-medium text-gray-700"
+                >
+                  Client Email
+                </label>
+                <input
+                  id="client-email"
+                  type="email"
+                  value={clientEmail}
+                  onChange={(e) => setClientEmail(e.target.value)}
+                  placeholder="e.g. jane@example.com"
+                  className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
+                />
+              </div>
             </div>
 
             {/* Service Notes */}

@@ -33,6 +33,8 @@ export interface Property {
   lng: number | null;
   notes: string | null;
   overlay_image_url: string | null;
+  client_name: string | null;
+  client_email: string | null;
   created_at: string;
   updated_at: string;
 }
