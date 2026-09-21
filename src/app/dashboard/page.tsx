@@ -179,7 +179,7 @@ export default function DashboardPage() {
         <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold text-gray-900">Upcoming Jobs</h2>
-            <Link href="/dashboard/tasks" className="text-sm text-green-600 hover:text-green-700">
+            <Link href="/dashboard/sites" className="text-sm text-green-600 hover:text-green-700">
               View all
             </Link>
           </div>

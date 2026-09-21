@@ -56,7 +56,6 @@ export interface Job {
   status: JobStatus;
   started_at: string | null;
   completed_at: string | null;
-  completion_photo_url: string | null;
   image_urls: string[] | null;
   skid_steer_used: boolean;
   created_at: string;
