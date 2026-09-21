@@ -38,6 +38,7 @@ export default function JobDetailPage() {
   const [siblingJobs, setSiblingJobs] = useState<JobWithCrew[]>([]);
 
   const [jobPhotos, setJobPhotos] = useState<JobPhoto[]>([]);
+  const [copiedStatusLink, setCopiedStatusLink] = useState(false);
 
   // Crew assignment state
   const [crews, setCrews] = useState<Crew[]>([]);
@@ -463,6 +464,33 @@ export default function JobDetailPage() {
                   <p className="mt-0.5 text-xs text-gray-400">
                     {job.property.lat.toFixed(5)}, {job.property.lng.toFixed(5)}
                   </p>
+                )}
+                {job.property_id && (
+                  <div className="mt-2 flex items-center gap-3 text-xs">
+                    <a
+                      href={`/status/${job.property_id}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-green-600 hover:text-green-700 font-medium"
+                    >
+                      View client status page
+                    </a>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          await navigator.clipboard.writeText(`${window.location.origin}/status/${job.property_id}`);
+                          setCopiedStatusLink(true);
+                          setTimeout(() => setCopiedStatusLink(false), 2000);
+                        } catch {
+                          alert(`${window.location.origin}/status/${job.property_id}`);
+                        }
+                      }}
+                      className="text-gray-500 hover:text-gray-700 font-medium"
+                    >
+                      {copiedStatusLink ? 'Copied!' : 'Copy link'}
+                    </button>
+                  </div>
                 )}
               </div>
               <div>
