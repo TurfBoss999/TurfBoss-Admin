@@ -82,7 +82,7 @@ export default function ReportsPage() {
     const days = daysMap[dateRange];
     const cutoff = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
 
-    return jobs.filter((job) => new Date(job.date) >= cutoff);
+    return jobs.filter((job) => new Date(job.date + 'T00:00:00') >= cutoff);
   }, [jobs, dateRange]);
 
   // ---- Completion Rate Stats ----

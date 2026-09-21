@@ -238,7 +238,7 @@ export default function JobsPage() {
                       </div>
                     </td>
                     <td className="px-6 py-4 text-sm text-gray-500">
-                      {new Date(group.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                      {new Date(group.date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                     </td>
                     <td className="px-6 py-4 text-sm text-gray-500">{crewSummary(group.jobs)}</td>
                     <td className="px-6 py-4">
@@ -282,7 +282,7 @@ export default function JobsPage() {
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium text-gray-900 truncate">{group.address}</p>
                   <div className="mt-0.5 flex items-center justify-between text-xs text-gray-500">
-                    <span>{new Date(group.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+                    <span>{new Date(group.date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
                     <span>{crewSummary(group.jobs)}</span>
                   </div>
                 </div>

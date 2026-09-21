@@ -26,7 +26,9 @@ function formatDate(dateStr: string): string {
 }
 
 function statusLine(job: Job): string {
-  if (job.status === 'completed' && job.completed_at) return `Done at ${formatTime(job.completed_at)}`;
+  if (job.status === 'completed') {
+    return job.completed_at ? `Done at ${formatTime(job.completed_at)}` : 'Completed';
+  }
   if (job.status === 'in_progress') return 'In progress';
   if (job.status === 'cancelled') return 'Cancelled';
   return 'Pending';

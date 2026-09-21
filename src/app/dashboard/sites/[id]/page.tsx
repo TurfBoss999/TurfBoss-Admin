@@ -496,11 +496,11 @@ export default function JobDetailPage() {
               <div>
                 <label className="block text-sm font-medium text-gray-500">Date</label>
                 <p className="mt-1 text-gray-900">
-                  {new Date(job.date).toLocaleDateString('en-US', { 
+                  {new Date(job.date + 'T00:00:00').toLocaleDateString('en-US', {
                     weekday: 'long',
-                    year: 'numeric', 
-                    month: 'long', 
-                    day: 'numeric' 
+                    year: 'numeric',
+                    month: 'long',
+                    day: 'numeric'
                   })}
                 </p>
               </div>
