@@ -78,6 +78,35 @@ export interface JobPhoto {
   uploaded_by: string | null;
 }
 
+export type EmailTemplate = 'storm_delay' | 'service_completion';
+
+export const EMAIL_TEMPLATE_LABELS: Record<EmailTemplate, string> = {
+  storm_delay: 'Storm Delay Notice',
+  service_completion: 'Service Completion Notice',
+};
+
+export type EmailSendStatus = 'sent' | 'failed';
+
+export interface EmailSend {
+  id: string;
+  template: EmailTemplate;
+  subject: string;
+  body: string;
+  recipient_email: string;
+  property_id: string | null;
+  status: EmailSendStatus;
+  error_message: string | null;
+  sent_by: string | null;
+  created_at: string;
+}
+
+export interface EmailRecipient {
+  property_id: string;
+  address: string;
+  client_name: string | null;
+  client_email: string;
+}
+
 // API Response types
 export interface ApiSuccessResponse<T> {
   success: true;
