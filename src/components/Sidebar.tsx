@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect } from 'react';
+import { TurfBossLogo } from './TurfBossLogo';
 
 interface NavItem {
   name: string;
@@ -97,11 +98,8 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
       >
         {/* Logo */}
         <div className="flex h-16 items-center justify-between border-b border-gray-700 px-4">
-          <Link href="/dashboard" className="flex items-center space-x-2">
-            <svg className="w-8 h-8 text-green-500" fill="currentColor" viewBox="0 0 24 24">
-              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z" />
-            </svg>
-            <span className="text-xl font-bold">TurfBoss</span>
+          <Link href="/dashboard" className="flex items-center">
+            <TurfBossLogo className="h-8" />
           </Link>
           {/* Close button - mobile only */}
           <button
