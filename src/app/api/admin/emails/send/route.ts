@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { Resend } from 'resend';
 import { createSupabaseServerClient } from '@/lib/supabaseServer';
 import { requireAdmin, handleApiError } from '@/lib/requireAdmin';
-import { renderTemplate } from '@/lib/emailTemplates';
+import { renderTemplate, sanitizeEmailText, sanitizeSubjectText } from '@/lib/emailTemplates';
 import { ApiResponse, EmailTemplate } from '@/types/database';
 
 interface SendEmailsRequest {
@@ -51,6 +51,15 @@ export async function POST(
       );
     }
 
+    // Normalize U+2028/U+2029 before this text is used for anything else.
+    // Mobile Safari's Return key inserts U+2028 into textareas instead of
+    // \n; sanitizing here (rather than trusting the client) covers this
+    // template, any future one, and any other input path. Subject gets the
+    // stricter pass since a raw \n there isn't just wrong, Resend rejects
+    // it outright (a subject is one header line, never multi-line).
+    body.subject = sanitizeSubjectText(body.subject);
+    body.body = sanitizeEmailText(body.body);
+
     const apiKey = process.env.RESEND_API_KEY;
     const fromEmail = process.env.RESEND_FROM_EMAIL;
 
@@ -76,9 +85,13 @@ export async function POST(
       );
     }
 
-    const recipients = (properties || []).filter(
-      (p): p is typeof p & { client_email: string } => !!p.client_email
-    );
+    const recipients = (properties || [])
+      .filter((p): p is typeof p & { client_email: string } => !!p.client_email)
+      .map((p) => ({
+        ...p,
+        client_name: p.client_name ? sanitizeEmailText(p.client_name) : p.client_name,
+        address: sanitizeEmailText(p.address),
+      }));
 
     if (recipients.length === 0) {
       return NextResponse.json(
@@ -97,7 +110,7 @@ export async function POST(
           address: property.address,
           status_link: `${origin}/status/${property.id}`,
         };
-        const subject = renderTemplate(body.subject, tokens);
+        const subject = sanitizeSubjectText(renderTemplate(body.subject, tokens));
         const html = renderTemplate(body.body, tokens).replace(/\n/g, '<br />');
 
         const { error: sendError } = await resend.emails.send({
@@ -129,11 +142,11 @@ export async function POST(
       }
       return {
         template: body.template,
-        subject: renderTemplate(body.subject, {
+        subject: sanitizeSubjectText(renderTemplate(body.subject, {
           client_name: property.client_name,
           address: property.address,
           status_link: `${origin}/status/${property.id}`,
-        }),
+        })),
         body: renderTemplate(body.body, {
           client_name: property.client_name,
           address: property.address,
