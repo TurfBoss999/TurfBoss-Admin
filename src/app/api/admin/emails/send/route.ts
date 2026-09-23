@@ -170,6 +170,10 @@ export async function POST(
 
     return NextResponse.json({ success: true, data: { sent, failed } });
   } catch (error) {
+    // Without this, a failure here leaves nothing in Vercel's function logs -
+    // the error message only ever reached the client's JSON response, never
+    // the server log, which is exactly what made an earlier bug hard to trace.
+    console.error('POST /api/admin/emails/send failed:', error);
     const { message, status } = handleApiError(error);
     return NextResponse.json({ success: false, error: message }, { status });
   }
