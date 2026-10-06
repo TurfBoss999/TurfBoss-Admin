@@ -294,7 +294,7 @@ export default function AddJobPage() {
       }
 
       // One Sub Job (a row in jobs) per selected service. crew_id starts empty: it is
-      // filled in with whichever crew actually completes the Sub Job.
+      // filled in with whichever crew starts (claims) the Sub Job.
       const { data: newJobs, error: insertError } = await supabase
         .from('jobs')
         .insert(

@@ -148,7 +148,12 @@ export default function JobVisitPage() {
     try {
       const { error: updateError } = await supabase
         .from('jobs')
-        .update({ status, updated_at: new Date().toISOString() })
+        // Back to Scheduled releases the claim, so any crew on the Job can pick it up again.
+        .update({
+          status,
+          updated_at: new Date().toISOString(),
+          ...(status === 'scheduled' ? { crew_id: null } : {}),
+        })
         .eq('id', job.id);
       if (updateError) throw updateError;
       await fetchVisit();

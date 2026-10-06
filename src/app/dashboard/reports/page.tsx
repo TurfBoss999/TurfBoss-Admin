@@ -120,8 +120,8 @@ export default function ReportsPage() {
   }, [filteredJobs]);
 
   // ---- Crew Performance Stats ----
-  // jobs.crew_id now means "the crew that completed this Sub Job" (empty until then),
-  // so it can no longer say who a Sub Job is waiting on. Done work is therefore counted
+  // jobs.crew_id now means "the crew that claimed (started) this Sub Job" (empty until
+  // then), so it can't say who a scheduled Sub Job is waiting on. Done work is therefore counted
   // by crew_id, and open work (active / upcoming / cancelled) by the crews assigned to the
   // Job it belongs to (job_visit_crews). A Job shared by two crews counts as open work for
   // each of them; a Sub Job is only ever "done" for the crew that completed it.

@@ -227,7 +227,12 @@ export default function JobDetailPage() {
 
       const { data, error: updateError } = await supabase
         .from('jobs')
-        .update({ status: newStatus, updated_at: new Date().toISOString() })
+        // Back to Scheduled releases the claim, so any crew on the Job can pick it up again.
+        .update({
+          status: newStatus,
+          updated_at: new Date().toISOString(),
+          ...(newStatus === 'scheduled' ? { crew_id: null } : {}),
+        })
         .eq('id', id)
         .select('*, crew:crews(*), property:properties(*)')
         .single();

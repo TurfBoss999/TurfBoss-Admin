@@ -29,8 +29,10 @@ export function visitStatus(jobs: Pick<Job, 'status'>[]): JobStatus {
 }
 
 // "Available" is its own UI state, separate from status: nobody has claimed the
-// Sub Job yet, so any crew assigned to the Job can pick it up. It stops applying
-// once the Sub Job is finished or cancelled.
+// Sub Job yet, so any crew assigned to the Job can pick it up. A crew claims a Sub Job
+// by starting it (that sets crew_id), so Available normally means scheduled; an
+// in-progress Sub Job with no crew was started by an admin. It stops applying once
+// the Sub Job is finished or cancelled.
 export function isAvailable(job: Pick<Job, 'crew_id' | 'status'>): boolean {
   return !job.crew_id && (job.status === 'scheduled' || job.status === 'in_progress');
 }
