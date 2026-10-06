@@ -26,6 +26,7 @@ type DateRange = '7d' | '30d' | '90d' | 'all';
 export default function ReportsPage() {
   const [jobs, setJobs] = useState<JobWithCrew[]>([]);
   const [crews, setCrews] = useState<Crew[]>([]);
+  const [visitCrews, setVisitCrews] = useState<{ job_visit_id: string; crew_id: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [dateRange, setDateRange] = useState<DateRange>('30d');
@@ -38,21 +39,24 @@ export default function ReportsPage() {
         setLoading(true);
         setError(null);
 
-        const [jobsRes, crewsRes] = await Promise.all([
+        const [jobsRes, crewsRes, visitCrewsRes] = await Promise.all([
           supabase
             .from('jobs')
             .select('*, crew:crews(*)')
             .order('date', { ascending: true }),
           supabase.from('crews').select('*').order('name', { ascending: true }),
+          supabase.from('job_visit_crews').select('job_visit_id, crew_id'),
         ]);
 
         if (cancelled) return;
 
         if (jobsRes.error) throw jobsRes.error;
         if (crewsRes.error) throw crewsRes.error;
+        if (visitCrewsRes.error) throw visitCrewsRes.error;
 
         setJobs(jobsRes.data as JobWithCrew[]);
         setCrews(crewsRes.data as Crew[]);
+        setVisitCrews(visitCrewsRes.data as { job_visit_id: string; crew_id: string }[]);
       } catch (err) {
         if (cancelled) return;
         const message =
@@ -116,6 +120,21 @@ export default function ReportsPage() {
   }, [filteredJobs]);
 
   // ---- Crew Performance Stats ----
+  // jobs.crew_id now means "the crew that completed this Sub Job" (empty until then),
+  // so it can no longer say who a Sub Job is waiting on. Done work is therefore counted
+  // by crew_id, and open work (active / upcoming / cancelled) by the crews assigned to the
+  // Job it belongs to (job_visit_crews). A Job shared by two crews counts as open work for
+  // each of them; a Sub Job is only ever "done" for the crew that completed it.
+  const crewsByVisit = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    visitCrews.forEach((link) => {
+      const set = map.get(link.job_visit_id) ?? new Set<string>();
+      set.add(link.crew_id);
+      map.set(link.job_visit_id, set);
+    });
+    return map;
+  }, [visitCrews]);
+
   const crewPerformance = useMemo(() => {
     const crewMap = new Map<
       string,
@@ -141,27 +160,50 @@ export default function ReportsPage() {
       });
     });
 
-    // Count jobs per crew
     filteredJobs.forEach((job) => {
-      if (!job.crew_id) return;
-      const entry = crewMap.get(job.crew_id);
-      if (!entry) return;
+      if (job.status === 'completed') {
+        const entry = job.crew_id ? crewMap.get(job.crew_id) : undefined;
+        if (!entry) return;
+        entry.total++;
+        entry.completed++;
+        return;
+      }
 
-      entry.total++;
-      if (job.status === 'completed') entry.completed++;
-      else if (job.status === 'cancelled') entry.cancelled++;
-      else if (job.status === 'in_progress') entry.inProgress++;
-      else if (job.status === 'scheduled') entry.scheduled++;
+      const assigned = job.job_visit_id ? crewsByVisit.get(job.job_visit_id) : undefined;
+      if (!assigned) return;
+      assigned.forEach((crewId) => {
+        const entry = crewMap.get(crewId);
+        if (!entry) return;
+        entry.total++;
+        if (job.status === 'cancelled') entry.cancelled++;
+        else if (job.status === 'in_progress') entry.inProgress++;
+        else if (job.status === 'scheduled') entry.scheduled++;
+      });
     });
 
     return Array.from(crewMap.values()).sort(
       (a, b) => b.completed - a.completed
     );
-  }, [filteredJobs, crews]);
+  }, [filteredJobs, crews, crewsByVisit]);
 
-  // Unassigned jobs count
-  const unassignedCount = useMemo(
-    () => filteredJobs.filter((j) => !j.crew_id).length,
+  // Open Jobs (property visits with work still to do) that no crew is assigned to, and
+  // Sub Jobs that were completed without a crew being recorded (e.g. marked done by an admin).
+  const openJobsWithoutCrew = useMemo(() => {
+    const openVisits = new Set<string>();
+    filteredJobs.forEach((j) => {
+      if (
+        j.job_visit_id &&
+        (j.status === 'scheduled' || j.status === 'in_progress') &&
+        !(crewsByVisit.get(j.job_visit_id)?.size)
+      ) {
+        openVisits.add(j.job_visit_id);
+      }
+    });
+    return openVisits.size;
+  }, [filteredJobs, crewsByVisit]);
+
+  const completedWithoutCrew = useMemo(
+    () => filteredJobs.filter((j) => j.status === 'completed' && !j.crew_id).length,
     [filteredJobs]
   );
 
@@ -322,7 +364,7 @@ export default function ReportsPage() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Reports</h1>
           <p className="mt-1 text-sm text-gray-500">
-            Crew performance and snow removal job completion analytics
+            Crew performance and Sub Job completion analytics
           </p>
         </div>
 
@@ -359,7 +401,7 @@ export default function ReportsPage() {
 
         {completionStats.total === 0 ? (
           <div className="py-8 text-center text-gray-500">
-            <p>No jobs found for this period.</p>
+            <p>No Sub Jobs found for this period.</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
@@ -484,7 +526,7 @@ export default function ReportsPage() {
           <div className="mt-6">
             <div className="mb-2 flex items-center justify-between text-sm">
               <span className="text-gray-500">
-                Status Breakdown ({completionStats.total} jobs)
+                Status Breakdown ({completionStats.total} Sub Jobs)
               </span>
             </div>
             <div className="flex h-4 w-full overflow-hidden rounded-full bg-gray-100">
@@ -537,12 +579,23 @@ export default function ReportsPage() {
           <h2 className="text-lg font-semibold text-gray-900">
             Crew Performance
           </h2>
-          {unassignedCount > 0 && (
-            <span className="rounded-full bg-yellow-100 px-3 py-1 text-xs font-medium text-yellow-700">
-              {unassignedCount} unassigned job{unassignedCount !== 1 ? 's' : ''}
-            </span>
-          )}
+          <div className="flex flex-wrap justify-end gap-2">
+            {openJobsWithoutCrew > 0 && (
+              <span className="rounded-full bg-yellow-100 px-3 py-1 text-xs font-medium text-yellow-700">
+                {openJobsWithoutCrew} Job{openJobsWithoutCrew !== 1 ? 's' : ''} with no crew assigned
+              </span>
+            )}
+            {completedWithoutCrew > 0 && (
+              <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-600">
+                {completedWithoutCrew} completed Sub Job{completedWithoutCrew !== 1 ? 's' : ''} with no crew recorded
+              </span>
+            )}
+          </div>
         </div>
+        <p className="-mt-3 mb-5 text-xs text-gray-400">
+          Done counts Sub Jobs this crew completed. Active and upcoming count Sub Jobs on Jobs the crew is
+          assigned to, so a Job shared by two crews shows for both.
+        </p>
 
         {crewPerformance.length === 0 ? (
           <div className="py-8 text-center text-gray-500">
@@ -588,7 +641,7 @@ export default function ReportsPage() {
                             {crew.name}
                           </p>
                           <p className="text-xs text-gray-500">
-                            {total} job{total !== 1 ? 's' : ''} total
+                            {total} Sub Job{total !== 1 ? 's' : ''} total
                             {crew.truck_number && (
                               <span className="ml-2 inline-flex items-center rounded bg-gray-100 px-1.5 py-0.5 text-xs font-medium text-gray-600">
                                 🚛 {crew.truck_number}
@@ -688,7 +741,7 @@ export default function ReportsPage() {
                       </div>
                     ) : (
                       <p className="text-xs italic text-gray-400">
-                        No jobs assigned in this period
+                        No Sub Jobs in this period
                       </p>
                     )}
                   </div>
@@ -706,7 +759,8 @@ export default function ReportsPage() {
             Timesheet &amp; Geofencing KPIs
           </h2>
           <p className="mt-1 text-sm text-gray-500">
-            Automatic timesheet tracking and geofence compliance monitoring
+            Automatic timesheet tracking and geofence compliance monitoring. Hours are credited to the
+            crew that completed each Sub Job.
           </p>
         </div>
 
@@ -724,7 +778,7 @@ export default function ReportsPage() {
               <span className="text-sm font-normal text-gray-500"> hrs</span>
             </p>
             <p className="text-xs text-gray-400">
-              {timesheetStats.timedJobsCount} of {timesheetStats.completedJobsCount} completed jobs timed
+              {timesheetStats.timedJobsCount} of {timesheetStats.completedJobsCount} completed Sub Jobs timed
             </p>
           </div>
 
@@ -763,7 +817,7 @@ export default function ReportsPage() {
               <span className="text-sm font-normal">%</span>
             </p>
             <p className="text-xs text-gray-400">
-              {timesheetStats.allGeoTracked} geo-tracked jobs
+              {timesheetStats.allGeoTracked} geo-tracked Sub Jobs
             </p>
           </div>
 
@@ -772,7 +826,7 @@ export default function ReportsPage() {
               <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
-              <span className="text-sm font-medium">Jobs Tracked</span>
+              <span className="text-sm font-medium">Sub Jobs Tracked</span>
             </div>
             <p className="mt-2 text-2xl font-bold text-gray-900">
               {timesheetStats.allGeoTracked}
@@ -792,8 +846,8 @@ export default function ReportsPage() {
                 <tr className="border-b border-gray-200 text-xs uppercase tracking-wider text-gray-500">
                   <th className="pb-3 pr-4 font-medium">Crew</th>
                   <th className="pb-3 px-4 font-medium text-center">Hours Logged</th>
-                  <th className="pb-3 px-4 font-medium text-center">Jobs Done</th>
-                  <th className="pb-3 px-4 font-medium text-center">Avg Time / Job</th>
+                  <th className="pb-3 px-4 font-medium text-center">Sub Jobs Done</th>
+                  <th className="pb-3 px-4 font-medium text-center">Avg Time / Sub Job</th>
                   <th className="pb-3 px-4 font-medium text-center">Geofence</th>
                   <th className="pb-3 pl-4 font-medium text-center">Status</th>
                 </tr>
