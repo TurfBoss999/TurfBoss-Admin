@@ -14,6 +14,7 @@ const PHOTO_TYPE_LABELS: Record<PhotoType, string> = {
 
 const ALL_SERVICE_TYPES: ServiceType[] = ['salt_lot', 'plow_lot', 'salt_walk', 'shovel_walks'];
 import StatusBadge from '@/components/StatusBadge';
+import { badgeStatus, isAvailable } from '@/lib/jobVisits';
 
 const STATUS_DISPLAY: Record<JobStatus, string> = {
   scheduled: 'Scheduled',
@@ -40,10 +41,8 @@ export default function JobDetailPage() {
   const [jobPhotos, setJobPhotos] = useState<JobPhoto[]>([]);
   const [copiedStatusLink, setCopiedStatusLink] = useState(false);
 
-  // Crew assignment state
-  const [crews, setCrews] = useState<Crew[]>([]);
-  const [showCrewPicker, setShowCrewPicker] = useState(false);
-  const [assigningCrew, setAssigningCrew] = useState(false);
+  // Crews are assigned to the Job, not to this Sub Job, so they're only read here.
+  const [visitCrews, setVisitCrews] = useState<Crew[]>([]);
 
   // Status update state
   const [updatingStatus, setUpdatingStatus] = useState(false);
@@ -58,14 +57,12 @@ export default function JobDetailPage() {
   const [editForm, setEditForm] = useState<{
     service_type: ServiceType;
     address: string;
-    date: string;
     service_notes: string;
     client_name: string;
     client_email: string;
   }>({
     service_type: 'salt_lot',
     address: '',
-    date: '',
     service_notes: '',
     client_name: '',
     client_email: '',
@@ -77,7 +74,6 @@ export default function JobDetailPage() {
     setEditForm({
       service_type: job.service_type,
       address: job.address || '',
-      date: job.date || '',
       service_notes: job.service_notes || '',
       client_name: job.property?.client_name || '',
       client_email: job.property?.client_email || '',
@@ -122,7 +118,6 @@ export default function JobDetailPage() {
         .update({
           service_type: editForm.service_type,
           address: editForm.address,
-          date: editForm.date,
           service_notes: editForm.service_notes,
           updated_at: new Date().toISOString(),
         })
@@ -149,16 +144,12 @@ export default function JobDetailPage() {
         setLoading(true);
         setError(null);
 
-        const [jobResult, crewsResult, photosResult] = await Promise.all([
+        const [jobResult, photosResult] = await Promise.all([
           supabase
             .from('jobs')
             .select('*, crew:crews(*), property:properties(*)')
             .eq('id', id)
             .single(),
-          supabase
-            .from('crews')
-            .select('*')
-            .order('name', { ascending: true }),
           supabase
             .from('job_photos')
             .select('*')
@@ -167,10 +158,6 @@ export default function JobDetailPage() {
         ]);
 
         if (cancelled) return;
-
-        if (crewsResult.data) {
-          setCrews(crewsResult.data as Crew[]);
-        }
 
         setJobPhotos((photosResult.data as JobPhoto[]) || []);
 
@@ -199,48 +186,39 @@ export default function JobDetailPage() {
   useEffect(() => {
     let cancelled = false;
 
-    async function fetchSiblings() {
-      if (!job?.property_id || !job.date) {
+    async function fetchVisitContext() {
+      if (!job?.job_visit_id) {
         setSiblingJobs([]);
+        setVisitCrews([]);
         return;
       }
 
-      const { data } = await supabase
-        .from('jobs')
-        .select('*, crew:crews(*)')
-        .eq('property_id', job.property_id)
-        .eq('date', job.date)
-        .neq('id', job.id)
-        .order('service_type', { ascending: true });
+      const [siblingsResult, crewsResult] = await Promise.all([
+        supabase
+          .from('jobs')
+          .select('*, crew:crews(*)')
+          .eq('job_visit_id', job.job_visit_id)
+          .neq('id', job.id)
+          .order('service_type', { ascending: true }),
+        supabase
+          .from('job_visit_crews')
+          .select('crew:crews(*)')
+          .eq('job_visit_id', job.job_visit_id),
+      ]);
 
-      if (!cancelled) setSiblingJobs((data as JobWithCrew[]) || []);
+      if (cancelled) return;
+      setSiblingJobs((siblingsResult.data as JobWithCrew[]) || []);
+      setVisitCrews(
+        ((crewsResult.data as unknown as { crew: Crew | null }[]) || [])
+          .map((r) => r.crew)
+          .filter((c): c is Crew => !!c)
+          .sort((a, b) => a.name.localeCompare(b.name))
+      );
     }
 
-    fetchSiblings();
+    fetchVisitContext();
     return () => { cancelled = true; };
-  }, [job?.property_id, job?.date, job?.id]);
-
-  async function handleAssignCrew(crewId: string | null) {
-    try {
-      setAssigningCrew(true);
-
-      const { data, error: updateError } = await supabase
-        .from('jobs')
-        .update({ crew_id: crewId, updated_at: new Date().toISOString() })
-        .eq('id', id)
-        .select('*, crew:crews(*), property:properties(*)')
-        .single();
-
-      if (updateError) throw updateError;
-      setJob(data as JobWithCrew);
-      setShowCrewPicker(false);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to assign crew';
-      alert(message);
-    } finally {
-      setAssigningCrew(false);
-    }
-  }
+  }, [job?.job_visit_id, job?.id]);
 
   async function handleStatusUpdate(newStatus: JobStatus) {
     if (!job || job.status === newStatus) return;
@@ -359,8 +337,8 @@ export default function JobDetailPage() {
         <svg className="h-16 w-16 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
         </svg>
-        <h2 className="mt-4 text-xl font-semibold text-gray-900">Job not found</h2>
-        <p className="mt-2 text-gray-500">The job you&apos;re looking for doesn&apos;t exist.</p>
+        <h2 className="mt-4 text-xl font-semibold text-gray-900">Sub Job not found</h2>
+        <p className="mt-2 text-gray-500">The Sub Job you&apos;re looking for doesn&apos;t exist.</p>
         <Link href="/dashboard/sites" className="mt-4 text-green-600 hover:text-green-700">
           &larr; Back to Jobs
         </Link>
@@ -368,7 +346,7 @@ export default function JobDetailPage() {
     );
   }
 
-  const statusDisplay = job.status === 'in_progress' ? 'In Progress' : job.status === 'scheduled' ? 'Pending' : 'Completed';
+  const statusDisplay = badgeStatus(job.status);
 
   return (
     <div className="space-y-6">
@@ -379,6 +357,16 @@ export default function JobDetailPage() {
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
         </svg>
         <Link href="/dashboard/sites" className="hover:text-gray-700">Jobs</Link>
+        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+        </svg>
+        {job.job_visit_id ? (
+          <Link href={`/dashboard/visits/${job.job_visit_id}`} className="hover:text-gray-700">
+            {job.property?.address || job.address}
+          </Link>
+        ) : (
+          <span>{job.property?.address || job.address}</span>
+        )}
         <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
         </svg>
@@ -410,7 +398,7 @@ export default function JobDetailPage() {
             <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
             </svg>
-            <span>Edit Job</span>
+            <span>Edit Sub Job</span>
           </button>
           <button
             onClick={() => router.back()}
@@ -430,7 +418,7 @@ export default function JobDetailPage() {
         <div className="lg:col-span-2 space-y-6">
           {/* Job Information Card */}
           <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">Job Information</h2>
+            <h2 className="text-lg font-semibold text-gray-900 mb-4">Sub Job Information</h2>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
                 <label className="block text-sm font-medium text-gray-500">Service Type</label>
@@ -553,7 +541,7 @@ export default function JobDetailPage() {
           {siblingJobs.length > 0 && (
             <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
               <h2 className="text-lg font-semibold text-gray-900 mb-4">
-                Other Services at This Visit
+                Other Sub Jobs on this Job
               </h2>
               <div className="space-y-2">
                 {siblingJobs.map((sibling) => (
@@ -567,18 +555,10 @@ export default function JobDetailPage() {
                         {SERVICE_TYPE_LABELS[sibling.service_type]}
                       </p>
                       <p className="text-xs text-gray-500">
-                        {sibling.crew?.name || 'Unassigned'}
+                        {sibling.crew?.name || (isAvailable(sibling) ? 'Available' : '\u00a0')}
                       </p>
                     </div>
-                    <StatusBadge
-                      status={
-                        sibling.status === 'in_progress'
-                          ? 'In Progress'
-                          : sibling.status === 'scheduled'
-                            ? 'Pending'
-                            : 'Completed'
-                      }
-                    />
+                    <StatusBadge status={badgeStatus(sibling.status)} />
                   </Link>
                 ))}
               </div>
@@ -726,127 +706,55 @@ export default function JobDetailPage() {
 
         {/* Right Column - Crew Info */}
         <div className="space-y-6">
-          {/* Crew Card */}
+          {/* Crew Card: crews are assigned to the Job, a Sub Job just records who completed it */}
           <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-gray-900">Assigned Crew</h2>
-            </div>
+            <h2 className="text-lg font-semibold text-gray-900 mb-4">Crew</h2>
             {job.crew ? (
               <div className="rounded-lg border border-gray-100 bg-gray-50 p-4">
-                <div className="flex items-center space-x-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-green-100 text-green-600">
-                    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
-                    </svg>
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium text-gray-900">{job.crew.name}</p>
-                    {job.crew.phone && (
-                      <p className="text-xs text-gray-500">{job.crew.phone}</p>
-                    )}
-                  </div>
-                </div>
+                <p className="text-xs font-medium uppercase tracking-wider text-gray-500">
+                  {job.status === 'completed' ? 'Completed by' : 'Claimed by'}
+                </p>
+                <p className="mt-1 text-sm font-medium text-gray-900">{job.crew.name}</p>
+                {job.crew.phone && <p className="text-xs text-gray-500">{job.crew.phone}</p>}
               </div>
             ) : (
-              <div className="py-8 text-center text-gray-500">
-                <svg className="mx-auto h-8 w-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
-                </svg>
-                <p className="mt-2 text-sm">No crew assigned</p>
+              <div className="rounded-lg border border-dashed border-gray-300 p-4">
+                <p className="text-sm font-medium text-gray-900">
+                  {isAvailable(job) ? 'Available' : 'No crew recorded'}
+                </p>
+                <p className="mt-1 text-xs text-gray-500">
+                  {isAvailable(job)
+                    ? 'Any crew assigned to this Job can pick this up and complete it.'
+                    : 'No crew was recorded for this Sub Job.'}
+                </p>
               </div>
             )}
-            <button
-              onClick={() => setShowCrewPicker(!showCrewPicker)}
-              className="mt-4 w-full inline-flex items-center justify-center space-x-2 rounded-lg bg-green-600 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-green-700"
-            >
-              <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-              </svg>
-              <span>{job.crew ? 'Reassign Crew' : 'Assign Crew'}</span>
-            </button>
 
-            {/* Crew Picker Dropdown */}
-            {showCrewPicker && (
-              <div className="mt-3 rounded-lg border border-gray-200 bg-white shadow-lg">
-                <div className="border-b border-gray-100 px-4 py-2">
-                  <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">Select a Crew</p>
-                </div>
-                <div className="max-h-60 overflow-y-auto">
-                  {/* Unassign option */}
-                  {job.crew && (
-                    <button
-                      onClick={() => handleAssignCrew(null)}
-                      disabled={assigningCrew}
-                      className="w-full flex items-center space-x-3 px-4 py-3 text-left text-sm hover:bg-red-50 text-red-600 border-b border-gray-100 disabled:opacity-50"
-                    >
-                      <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                      <span>Unassign Crew</span>
-                    </button>
-                  )}
-
-                  {crews.length === 0 ? (
-                    <div className="px-4 py-6 text-center text-sm text-gray-500">
-                      <p>No crews available.</p>
-                      <Link href="/dashboard/teams" className="mt-1 text-green-600 hover:text-green-700 font-medium">
-                        Add a team first
-                      </Link>
-                    </div>
-                  ) : (
-                    crews.map((crew) => {
-                      const isSelected = job.crew_id === crew.id;
-                      return (
-                        <button
-                          key={crew.id}
-                          onClick={() => handleAssignCrew(crew.id)}
-                          disabled={assigningCrew || isSelected}
-                          className={`w-full flex items-center justify-between px-4 py-3 text-left text-sm transition-colors disabled:opacity-50 ${
-                            isSelected
-                              ? 'bg-green-50 text-green-800'
-                              : 'hover:bg-gray-50 text-gray-700'
-                          }`}
-                        >
-                          <div className="flex items-center space-x-3">
-                            <div className={`flex h-8 w-8 items-center justify-center rounded-full ${
-                              isSelected ? 'bg-green-200 text-green-700' : 'bg-blue-100 text-blue-600'
-                            }`}>
-                              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
-                              </svg>
-                            </div>
-                            <div>
-                              <p className="font-medium">{crew.name}</p>
-                              {crew.phone && <p className="text-xs text-gray-500">{crew.phone}</p>}
-                            </div>
-                          </div>
-                          {isSelected && (
-                            <svg className="h-5 w-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                            </svg>
-                          )}
-                        </button>
-                      );
-                    })
-                  )}
-                </div>
-
-                {assigningCrew && (
-                  <div className="flex items-center justify-center border-t border-gray-100 px-4 py-2">
-                    <svg className="h-4 w-4 animate-spin text-green-600 mr-2" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                    </svg>
-                    <span className="text-xs text-gray-500">Updating...</span>
-                  </div>
-                )}
-              </div>
-            )}
+            <div className="mt-4 border-t border-gray-100 pt-4">
+              <p className="text-xs font-medium uppercase tracking-wider text-gray-500">Crews on this Job</p>
+              {visitCrews.length === 0 ? (
+                <p className="mt-1 text-sm text-gray-500">None assigned</p>
+              ) : (
+                <ul className="mt-1 space-y-0.5">
+                  {visitCrews.map((crew) => (
+                    <li key={crew.id} className="text-sm text-gray-700">{crew.name}</li>
+                  ))}
+                </ul>
+              )}
+              {job.job_visit_id && (
+                <Link
+                  href={`/dashboard/visits/${job.job_visit_id}`}
+                  className="mt-3 inline-block text-sm font-medium text-green-600 hover:text-green-700"
+                >
+                  Manage crews on the Job &rarr;
+                </Link>
+              )}
+            </div>
           </div>
 
           {/* Status Card */}
           <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">Job Status</h2>
+            <h2 className="text-lg font-semibold text-gray-900 mb-4">Sub Job Status</h2>
             <div className="flex flex-col space-y-2">
               {(['scheduled', 'in_progress', 'completed', 'cancelled'] as JobStatus[]).map((status) => (
                 <button
@@ -879,7 +787,7 @@ export default function JobDetailPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="w-full max-w-lg mx-4 rounded-xl bg-white p-6 shadow-xl">
             <div className="flex items-center justify-between mb-6">
-              <h2 className="text-xl font-semibold text-gray-900">Edit Job</h2>
+              <h2 className="text-xl font-semibold text-gray-900">Edit Sub Job</h2>
               <button
                 type="button"
                 onClick={() => setShowEditModal(false)}
@@ -915,16 +823,6 @@ export default function JobDetailPage() {
                   onChange={(e) => setEditForm({ ...editForm, address: e.target.value })}
                   className="w-full rounded-lg border border-gray-300 px-4 py-2 text-gray-900 focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
                   placeholder="123 Main St, City, State"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Date</label>
-                <input
-                  type="date"
-                  value={editForm.date}
-                  onChange={(e) => setEditForm({ ...editForm, date: e.target.value })}
-                  className="w-full rounded-lg border border-gray-300 px-4 py-2 text-gray-900 focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
                 />
               </div>
 
@@ -974,7 +872,7 @@ export default function JobDetailPage() {
               <button
                 type="button"
                 onClick={handleSaveEdit}
-                disabled={savingEdit || !editForm.service_type || !editForm.address || !editForm.date}
+                disabled={savingEdit || !editForm.service_type || !editForm.address}
                 className="inline-flex items-center rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
               >
                 {savingEdit ? (

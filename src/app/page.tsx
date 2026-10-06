@@ -13,7 +13,7 @@ export default function HomePage() {
     if (!isLoading && !hasRedirected) {
       if (isAuthenticated || session) {
         if (isAdmin) {
-          router.push('/admin/dashboard');
+          router.push('/dashboard');
         } else {
           router.push('/dashboard');
         }

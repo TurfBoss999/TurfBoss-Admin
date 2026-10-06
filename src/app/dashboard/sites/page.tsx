@@ -3,8 +3,9 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { getSupabaseBrowserClient } from '@/lib/supabaseBrowser';
-import { JobWithCrew, JobStatus, SERVICE_TYPE_LABELS } from '@/types/database';
+import { Crew, JobStatus, JobVisitWithDetails, SERVICE_TYPE_LABELS } from '@/types/database';
 import StatusBadge from '@/components/StatusBadge';
+import { badgeStatus, formatVisitDate, isAvailable, visitStatus } from '@/lib/jobVisits';
 
 type StatusFilter = 'All' | 'scheduled' | 'in_progress' | 'completed' | 'cancelled';
 
@@ -15,49 +16,26 @@ const STATUS_DISPLAY: Record<JobStatus, string> = {
   cancelled: 'Cancelled',
 };
 
-function badgeStatus(status: JobStatus): 'Pending' | 'In Progress' | 'Completed' {
-  return status === 'in_progress' ? 'In Progress' : status === 'scheduled' ? 'Pending' : 'Completed';
+// A Job is a property visit: one row per property per date. The services under
+// it are its Sub Jobs (rows in the jobs table).
+function visitAddress(visit: JobVisitWithDetails): string {
+  return visit.property?.address || visit.jobs[0]?.address || 'Unknown property';
 }
 
-interface VisitGroup {
-  key: string;
-  address: string;
-  date: string;
-  jobs: JobWithCrew[];
-}
-
-// A "visit" is every job sharing a property and date — one row per property
-// per day, even though it's N independently-tracked service jobs underneath.
-function groupByVisit(jobs: JobWithCrew[]): VisitGroup[] {
-  const groups = new Map<string, VisitGroup>();
-
-  for (const job of jobs) {
-    const key = `${job.property_id || job.address}|${job.date}`;
-    const existing = groups.get(key);
-    if (existing) {
-      existing.jobs.push(job);
-    } else {
-      groups.set(key, {
-        key,
-        address: job.property?.address || job.address,
-        date: job.date,
-        jobs: [job],
-      });
-    }
-  }
-
-  return Array.from(groups.values()).sort((a, b) => a.date.localeCompare(b.date));
-}
-
-function crewSummary(jobs: JobWithCrew[]): string {
-  const names = Array.from(new Set(jobs.map((j) => j.crew?.name || 'Unassigned')));
-  return names.length === 1 ? names[0] : `${names.length} crews`;
+function crewSummary(visit: JobVisitWithDetails): string {
+  const names = visit.crews
+    .map((c) => c.crew)
+    .filter((c): c is Crew => !!c)
+    .map((c) => c.name)
+    .sort((a, b) => a.localeCompare(b));
+  if (names.length === 0) return 'Unassigned';
+  return names.length <= 2 ? names.join(', ') : `${names.length} crews`;
 }
 
 const supabase = getSupabaseBrowserClient();
 
 export default function JobsPage() {
-  const [jobs, setJobs] = useState<JobWithCrew[]>([]);
+  const [visits, setVisits] = useState<JobVisitWithDetails[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -72,14 +50,15 @@ export default function JobsPage() {
         setError(null);
 
         const { data, error: fetchError } = await supabase
-          .from('jobs')
-          .select('*, crew:crews(*), property:properties(*)')
+          .from('job_visits')
+          .select('*, property:properties(*), crews:job_visit_crews(crew:crews(*)), jobs(*, crew:crews(*))')
           .order('date', { ascending: true });
 
         if (cancelled) return;
         if (fetchError) throw fetchError;
 
-        setJobs(data as JobWithCrew[]);
+        // A visit with no Sub Jobs (left behind by a failed create) isn't a Job anyone can act on.
+        setVisits((data as JobVisitWithDetails[]).filter((v) => v.jobs.length > 0));
       } catch (err) {
         if (cancelled) return;
         const message = err instanceof Error ? err.message : 'Failed to fetch jobs';
@@ -92,24 +71,22 @@ export default function JobsPage() {
     fetchJobs();
     return () => { cancelled = true; };
   }, []);
-  const filteredJobs = jobs.filter((job) => {
-    const displayAddress = job.property?.address || job.address;
+  const filteredVisits = visits.filter((visit) => {
+    const q = searchQuery.toLowerCase();
     const matchesSearch =
-      displayAddress.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      SERVICE_TYPE_LABELS[job.service_type].toLowerCase().includes(searchQuery.toLowerCase());
+      visitAddress(visit).toLowerCase().includes(q) ||
+      visit.jobs.some((job) => SERVICE_TYPE_LABELS[job.service_type].toLowerCase().includes(q));
 
-    const matchesStatus =
-      statusFilter === 'All' || job.status === statusFilter;
+    const matchesStatus = statusFilter === 'All' || visitStatus(visit.jobs) === statusFilter;
 
     return matchesSearch && matchesStatus;
   });
-  const visitGroups = groupByVisit(filteredJobs);
   const statusCounts = {
-    All: jobs.length,
-    scheduled: jobs.filter((j) => j.status === 'scheduled').length,
-    in_progress: jobs.filter((j) => j.status === 'in_progress').length,
-    completed: jobs.filter((j) => j.status === 'completed').length,
-    cancelled: jobs.filter((j) => j.status === 'cancelled').length,
+    All: visits.length,
+    scheduled: visits.filter((v) => visitStatus(v.jobs) === 'scheduled').length,
+    in_progress: visits.filter((v) => visitStatus(v.jobs) === 'in_progress').length,
+    completed: visits.filter((v) => visitStatus(v.jobs) === 'completed').length,
+    cancelled: visits.filter((v) => visitStatus(v.jobs) === 'cancelled').length,
   };
 
   if (loading) {
@@ -144,7 +121,7 @@ export default function JobsPage() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Jobs</h1>
           <p className="mt-1 text-sm text-gray-500">
-            Manage and view all snow removal jobs, grouped by property visit
+            Each Job is one property visit; its services are the Sub Jobs underneath
           </p>
         </div>
         <Link
@@ -197,7 +174,7 @@ export default function JobsPage() {
         </div>
       </div>
 
-      {/* Visit Groups - Desktop */}
+      {/* Jobs - Desktop */}
       <div className="hidden md:block overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
@@ -206,21 +183,21 @@ export default function JobsPage() {
                 <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Property</th>
                 <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Date</th>
                 <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Crew</th>
-                <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Services</th>
+                <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Sub Jobs</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200 bg-white">
-              {visitGroups.length === 0 ? (
+              {filteredVisits.length === 0 ? (
                 <tr>
                   <td colSpan={4} className="px-6 py-12 text-center text-gray-500">
                     No jobs found
                   </td>
                 </tr>
               ) : (
-                visitGroups.map((group) => (
-                  <tr key={group.key} className="hover:bg-gray-50 transition-colors align-top">
+                filteredVisits.map((visit) => (
+                  <tr key={visit.id} className="hover:bg-gray-50 transition-colors align-top">
                     <td className="px-6 py-4">
-                      <div className="flex items-center">
+                      <Link href={`/dashboard/visits/${visit.id}`} className="group flex items-center">
                         <div className="h-10 w-10 flex-shrink-0">
                           <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-green-100 text-green-600">
                             <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -230,26 +207,27 @@ export default function JobsPage() {
                           </div>
                         </div>
                         <div className="ml-4">
-                          <p className="text-sm font-medium text-gray-900">{group.address}</p>
+                          <p className="text-sm font-medium text-gray-900 group-hover:text-green-700">{visitAddress(visit)}</p>
                           <p className="text-xs text-gray-400">
-                            {group.jobs.length} service{group.jobs.length !== 1 ? 's' : ''}
+                            {visit.jobs.length} Sub Job{visit.jobs.length !== 1 ? 's' : ''}
                           </p>
                         </div>
-                      </div>
+                      </Link>
                     </td>
-                    <td className="px-6 py-4 text-sm text-gray-500">
-                      {new Date(group.date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                    </td>
-                    <td className="px-6 py-4 text-sm text-gray-500">{crewSummary(group.jobs)}</td>
+                    <td className="px-6 py-4 text-sm text-gray-500">{formatVisitDate(visit.date)}</td>
+                    <td className="px-6 py-4 text-sm text-gray-500">{crewSummary(visit)}</td>
                     <td className="px-6 py-4">
                       <div className="flex flex-col gap-1.5">
-                        {group.jobs.map((job) => (
+                        {visit.jobs.map((job) => (
                           <Link
                             key={job.id}
                             href={`/dashboard/sites/${job.id}`}
                             className="flex items-center justify-between gap-3 rounded-lg px-2 py-1 hover:bg-gray-100 transition-colors"
                           >
-                            <span className="text-sm text-gray-700">{SERVICE_TYPE_LABELS[job.service_type]}</span>
+                            <span className="text-sm text-gray-700">
+                              {SERVICE_TYPE_LABELS[job.service_type]}
+                              {isAvailable(job) && <span className="ml-2 text-xs text-gray-400">Available</span>}
+                            </span>
                             <StatusBadge status={badgeStatus(job.status)} />
                           </Link>
                         ))}
@@ -263,16 +241,16 @@ export default function JobsPage() {
         </div>
       </div>
 
-      {/* Visit Groups - Mobile */}
+      {/* Jobs - Mobile */}
       <div className="space-y-3 md:hidden">
-        {visitGroups.length === 0 ? (
+        {filteredVisits.length === 0 ? (
           <div className="rounded-xl border border-gray-200 bg-white px-6 py-12 text-center text-gray-500 shadow-sm">
             No jobs found
           </div>
         ) : (
-          visitGroups.map((group) => (
-            <div key={group.key} className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-              <div className="flex items-start space-x-3">
+          filteredVisits.map((visit) => (
+            <div key={visit.id} className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+              <Link href={`/dashboard/visits/${visit.id}`} className="flex items-start space-x-3">
                 <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-green-100 text-green-600">
                   <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
@@ -280,21 +258,24 @@ export default function JobsPage() {
                   </svg>
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-gray-900 truncate">{group.address}</p>
+                  <p className="text-sm font-medium text-gray-900 truncate">{visitAddress(visit)}</p>
                   <div className="mt-0.5 flex items-center justify-between text-xs text-gray-500">
-                    <span>{new Date(group.date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
-                    <span>{crewSummary(group.jobs)}</span>
+                    <span>{formatVisitDate(visit.date)}</span>
+                    <span>{crewSummary(visit)}</span>
                   </div>
                 </div>
-              </div>
+              </Link>
               <div className="mt-3 space-y-1.5 border-t border-gray-100 pt-3">
-                {group.jobs.map((job) => (
+                {visit.jobs.map((job) => (
                   <Link
                     key={job.id}
                     href={`/dashboard/sites/${job.id}`}
                     className="flex items-center justify-between rounded-lg px-2 py-1 hover:bg-gray-50 transition-colors"
                   >
-                    <span className="text-sm text-gray-700">{SERVICE_TYPE_LABELS[job.service_type]}</span>
+                    <span className="text-sm text-gray-700">
+                      {SERVICE_TYPE_LABELS[job.service_type]}
+                      {isAvailable(job) && <span className="ml-2 text-xs text-gray-400">Available</span>}
+                    </span>
                     <StatusBadge status={badgeStatus(job.status)} />
                   </Link>
                 ))}
@@ -306,7 +287,7 @@ export default function JobsPage() {
 
       {/* Results Info */}
       <div className="text-sm text-gray-500">
-        Showing {filteredJobs.length} of {jobs.length} jobs across {visitGroups.length} propert{visitGroups.length !== 1 ? 'ies' : 'y'}
+        Showing {filteredVisits.length} of {visits.length} Job{visits.length !== 1 ? 's' : ''}
       </div>
     </div>
   );

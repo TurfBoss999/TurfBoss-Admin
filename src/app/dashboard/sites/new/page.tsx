@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { getSupabaseBrowserClient } from '@/lib/supabaseBrowser';
 import { Crew, JobStatus, Property, ServiceType, SERVICE_TYPE_LABELS } from '@/types/database';
+import { getOrCreateVisit } from '@/lib/jobVisits';
 
 const ALL_SERVICE_TYPES: ServiceType[] = ['salt_lot', 'plow_lot', 'salt_walk', 'shovel_walks'];
 
@@ -29,7 +30,7 @@ export default function AddJobPage() {
   const [timeWindowStart, setTimeWindowStart] = useState('');
   const [timeWindowEnd, setTimeWindowEnd] = useState('');
   const [estDuration, setEstDuration] = useState('');
-  const [crewId, setCrewId] = useState('');
+  const [crewIds, setCrewIds] = useState<string[]>([]);
   const [status, setStatus] = useState<JobStatus>('scheduled');
   const [serviceNotes, setServiceNotes] = useState('');
 
@@ -272,9 +273,28 @@ export default function AddJobPage() {
 
       const propertyId = await resolvePropertyId(address);
 
-      // One job row per selected service, sharing this same visit's
-      // property/date/crew/schedule — matches the paper tracking sheet's
-      // per-service columns rather than one row per property visit.
+      // One Job per property per date. If one already exists, the new services are
+      // added to it rather than starting a second Job for the same visit.
+      const visit = await getOrCreateVisit(supabase, propertyId, date);
+
+      const { data: existingSubJobs, error: existingError } = await supabase
+        .from('jobs')
+        .select('service_type')
+        .eq('job_visit_id', visit.id);
+      if (existingError) throw existingError;
+
+      const alreadyThere = selectedServices.filter((svc) =>
+        (existingSubJobs || []).some((j: { service_type: string }) => j.service_type === svc)
+      );
+      if (alreadyThere.length > 0) {
+        setFormError(
+          `${alreadyThere.map((svc) => SERVICE_TYPE_LABELS[svc]).join(', ')} already exist${alreadyThere.length === 1 ? 's' : ''} on this property's Job for that date. Remove ${alreadyThere.length === 1 ? 'it' : 'them'} here, or open the existing Job.`
+        );
+        return;
+      }
+
+      // One Sub Job (a row in jobs) per selected service. crew_id starts empty: it is
+      // filled in with whichever crew actually completes the Sub Job.
       const { data: newJobs, error: insertError } = await supabase
         .from('jobs')
         .insert(
@@ -282,11 +302,12 @@ export default function AddJobPage() {
             service_type: serviceType,
             address: address.trim(),
             property_id: propertyId,
+            job_visit_id: visit.id,
             date,
             time_window_start: timeWindowStart || null,
             time_window_end: timeWindowEnd || null,
             est_duration_min: estDuration ? parseInt(estDuration, 10) : null,
-            crew_id: crewId || null,
+            crew_id: null,
             status,
             service_notes: serviceNotes.trim() || null,
             skid_steer_used: serviceType === 'plow_lot' ? skidSteerUsed : false,
@@ -295,6 +316,18 @@ export default function AddJobPage() {
         .select();
 
       if (insertError) throw insertError;
+
+      // Crews are assigned to the Job as a whole. Only ever adds: crews already on an
+      // existing Job for this date are left alone.
+      if (crewIds.length > 0) {
+        const { error: crewLinkError } = await supabase
+          .from('job_visit_crews')
+          .upsert(
+            crewIds.map((crew_id) => ({ job_visit_id: visit.id, crew_id })),
+            { onConflict: 'job_visit_id,crew_id', ignoreDuplicates: true }
+          );
+        if (crewLinkError) throw crewLinkError;
+      }
 
       // Upload images if any were selected — attached to just the first
       // created job rather than duplicated across every service.
@@ -368,7 +401,7 @@ export default function AddJobPage() {
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Add New Job</h1>
         <p className="mt-1 text-sm text-gray-500">
-          Create a new snow removal job and optionally assign it to a crew
+          Create a Job for a property visit. Any crew you pick can complete any of its Sub Jobs.
         </p>
       </div>
 
@@ -708,7 +741,7 @@ export default function AddJobPage() {
                 htmlFor="crew"
                 className="mb-1 block text-sm font-medium text-gray-700"
               >
-                Assign to Crew
+                Crews for this Job
               </label>
               {loadingCrews ? (
                 <div className="flex items-center space-x-2 py-2.5 text-sm text-gray-400">
@@ -734,20 +767,34 @@ export default function AddJobPage() {
                   <span>Loading crews...</span>
                 </div>
               ) : (
-                <select
+                <div
                   id="crew"
-                  value={crewId}
-                  onChange={(e) => setCrewId(e.target.value)}
-                  className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
+                  className="max-h-48 space-y-1 overflow-y-auto rounded-lg border border-gray-300 p-2"
                 >
-                  <option value="">Unassigned</option>
                   {crews.map((crew) => (
-                    <option key={crew.id} value={crew.id}>
-                      {crew.name}
-                      {crew.phone ? ` — ${crew.phone}` : ''}
-                    </option>
+                    <label
+                      key={crew.id}
+                      className="flex cursor-pointer items-center space-x-3 rounded-md px-2 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={crewIds.includes(crew.id)}
+                        onChange={(e) =>
+                          setCrewIds((prev) =>
+                            e.target.checked
+                              ? [...prev, crew.id]
+                              : prev.filter((id) => id !== crew.id)
+                          )
+                        }
+                        className="h-4 w-4 rounded border-gray-300 text-green-600 focus:ring-green-500"
+                      />
+                      <span>
+                        {crew.name}
+                        {crew.phone ? ` \u2014 ${crew.phone}` : ''}
+                      </span>
+                    </label>
                   ))}
-                </select>
+                </div>
               )}
               {!loadingCrews && crews.length === 0 && (
                 <p className="mt-1 text-xs text-gray-400">

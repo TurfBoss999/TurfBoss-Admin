@@ -3,14 +3,15 @@
 import { useState, useEffect } from 'react';
 import { StatCard } from '@/components';
 import { getSupabaseBrowserClient } from '@/lib/supabaseBrowser';
-import { JobWithCrew, Crew, SERVICE_TYPE_LABELS } from '@/types/database';
+import { JobVisitWithDetails, Crew } from '@/types/database';
 import StatusBadge from '@/components/StatusBadge';
 import Link from 'next/link';
+import { badgeStatus, formatVisitDate, visitStatus } from '@/lib/jobVisits';
 
 const supabase = getSupabaseBrowserClient();
 
 export default function DashboardPage() {
-  const [jobs, setJobs] = useState<JobWithCrew[]>([]);
+  const [visits, setVisits] = useState<JobVisitWithDetails[]>([]);
   const [crews, setCrews] = useState<Crew[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -23,16 +24,19 @@ export default function DashboardPage() {
         setLoading(true);
         setError(null);
 
-        const [jobsRes, crewsRes] = await Promise.all([
-          supabase.from('jobs').select('*, crew:crews(*)').order('date', { ascending: true }),
+        const [visitsRes, crewsRes] = await Promise.all([
+          supabase
+            .from('job_visits')
+            .select('*, property:properties(*), crews:job_visit_crews(crew:crews(*)), jobs(*, crew:crews(*))')
+            .order('date', { ascending: true }),
           supabase.from('crews').select('*'),
         ]);
 
         if (cancelled) return;
-        if (jobsRes.error) throw jobsRes.error;
+        if (visitsRes.error) throw visitsRes.error;
         if (crewsRes.error) throw crewsRes.error;
 
-        setJobs(jobsRes.data as JobWithCrew[]);
+        setVisits((visitsRes.data as JobVisitWithDetails[]).filter((v) => v.jobs.length > 0));
         setCrews(crewsRes.data as Crew[]);
       } catch (err) {
         if (cancelled) return;
@@ -47,14 +51,27 @@ export default function DashboardPage() {
     return () => { cancelled = true; };
   }, []);
 
-  const recentJobs = jobs.slice(0, 4);
-  const scheduledJobs = jobs.filter((j) => j.status === 'scheduled' || j.status === 'in_progress');
+  // A "Job" is a property visit; the cards and lists count and link Jobs, not their Sub Jobs.
+  const recentJobs = visits.slice(0, 4);
+  const scheduledJobs = visits.filter((v) => {
+    const status = visitStatus(v.jobs);
+    return status === 'scheduled' || status === 'in_progress';
+  });
 
   const stats = {
-    totalJobs: jobs.length,
-    activeJobs: jobs.filter((j) => j.status === 'in_progress').length,
-    scheduledJobs: jobs.filter((j) => j.status === 'scheduled').length,
+    totalJobs: visits.length,
+    activeJobs: visits.filter((v) => visitStatus(v.jobs) === 'in_progress').length,
+    scheduledJobs: visits.filter((v) => visitStatus(v.jobs) === 'scheduled').length,
     totalCrews: crews.length,
+  };
+
+  const visitAddress = (v: JobVisitWithDetails) => v.property?.address || v.jobs[0]?.address || 'Unknown property';
+  const crewNames = (v: JobVisitWithDetails) => {
+    const names = v.crews
+      .map((c) => c.crew?.name)
+      .filter((n): n is string => !!n)
+      .sort((a, b) => a.localeCompare(b));
+    return names.length === 0 ? 'Unassigned' : names.join(', ');
   };
 
   if (loading) {
@@ -151,10 +168,10 @@ export default function DashboardPage() {
             {recentJobs.length === 0 ? (
               <p className="text-gray-500 text-sm text-center py-4">No jobs found</p>
             ) : (
-              recentJobs.map((job) => (
+              recentJobs.map((visit) => (
                 <Link
-                  key={job.id}
-                  href={`/dashboard/sites/${job.id}`}
+                  key={visit.id}
+                  href={`/dashboard/visits/${visit.id}`}
                   className="flex items-center justify-between rounded-lg p-3 hover:bg-gray-50 transition-colors"
                 >
                   <div className="flex items-center space-x-3">
@@ -164,11 +181,13 @@ export default function DashboardPage() {
                       </svg>
                     </div>
                     <div>
-                      <p className="text-sm font-medium text-gray-900">{SERVICE_TYPE_LABELS[job.service_type]}</p>
-                      <p className="text-xs text-gray-500 truncate max-w-[150px] sm:max-w-[200px]">{job.address}</p>
+                      <p className="text-sm font-medium text-gray-900 truncate max-w-[150px] sm:max-w-[200px]">{visitAddress(visit)}</p>
+                      <p className="text-xs text-gray-500">
+                        {formatVisitDate(visit.date)} &middot; {visit.jobs.length} Sub Job{visit.jobs.length !== 1 ? 's' : ''}
+                      </p>
                     </div>
                   </div>
-                  <StatusBadge status={job.status === 'in_progress' ? 'In Progress' : job.status === 'scheduled' ? 'Pending' : 'Completed'} />
+                  <StatusBadge status={badgeStatus(visitStatus(visit.jobs))} />
                 </Link>
               ))
             )}
@@ -187,10 +206,10 @@ export default function DashboardPage() {
             {scheduledJobs.length === 0 ? (
               <p className="text-gray-500 text-sm text-center py-4">No scheduled jobs</p>
             ) : (
-              scheduledJobs.slice(0, 5).map((job) => (
+              scheduledJobs.slice(0, 5).map((visit) => (
                 <Link
-                  key={job.id}
-                  href={`/dashboard/sites/${job.id}`}
+                  key={visit.id}
+                  href={`/dashboard/visits/${visit.id}`}
                   className="flex items-center justify-between rounded-lg p-3 hover:bg-gray-50 transition-colors"
                 >
                   <div className="flex items-center space-x-3">
@@ -200,11 +219,11 @@ export default function DashboardPage() {
                       </svg>
                     </div>
                     <div>
-                      <p className="text-sm font-medium text-gray-900">{SERVICE_TYPE_LABELS[job.service_type]}</p>
-                      <p className="text-xs text-gray-500">{job.crew?.name || 'Unassigned'}</p>
+                      <p className="text-sm font-medium text-gray-900 truncate max-w-[150px] sm:max-w-[200px]">{visitAddress(visit)}</p>
+                      <p className="text-xs text-gray-500">{formatVisitDate(visit.date)} &middot; {crewNames(visit)}</p>
                     </div>
                   </div>
-                  <StatusBadge status={job.status === 'in_progress' ? 'In Progress' : job.status === 'scheduled' ? 'Pending' : 'Completed'} />
+                  <StatusBadge status={badgeStatus(visitStatus(visit.jobs))} />
                 </Link>
               ))
             )}

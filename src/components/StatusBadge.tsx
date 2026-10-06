@@ -1,17 +1,19 @@
 interface StatusBadgeProps {
-  status: 'Pending' | 'In Progress' | 'Completed';
+  status: 'Pending' | 'In Progress' | 'Completed' | 'Cancelled';
 }
 
 const statusStyles = {
   Pending: 'bg-yellow-100 text-yellow-800 border-yellow-200',
   'In Progress': 'bg-blue-100 text-blue-800 border-blue-200',
   Completed: 'bg-green-100 text-green-800 border-green-200',
+  Cancelled: 'bg-gray-100 text-gray-600 border-gray-200',
 };
 
 const statusDots = {
   Pending: 'bg-yellow-500',
   'In Progress': 'bg-blue-500',
   Completed: 'bg-green-500',
+  Cancelled: 'bg-gray-400',
 };
 
 export default function StatusBadge({ status }: StatusBadgeProps) {

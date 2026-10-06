@@ -53,6 +53,7 @@ export interface Job {
   lng: number | null;
   crew_id: string | null;
   property_id: string | null;
+  job_visit_id: string | null;
   status: JobStatus;
   started_at: string | null;
   completed_at: string | null;
@@ -65,6 +66,26 @@ export interface Job {
 export interface JobWithCrew extends Job {
   crew: Crew | null;
   property: Property | null;
+}
+
+// A "Job" in the UI is a property visit: one row per property per date, with each
+// service underneath it stored as a row in the `jobs` table (shown as a "Sub Job").
+export interface JobVisit {
+  id: string;
+  property_id: string;
+  date: string;
+  created_at: string;
+}
+
+export interface JobVisitCrew {
+  job_visit_id: string;
+  crew_id: string;
+}
+
+export interface JobVisitWithDetails extends JobVisit {
+  property: Property | null;
+  crews: { crew: Crew | null }[];
+  jobs: JobWithCrew[];
 }
 
 export type PhotoType = 'before' | 'after' | 'issue';

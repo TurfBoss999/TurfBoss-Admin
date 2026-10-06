@@ -34,6 +34,9 @@ export default function TeamsPage() {
 
   // Delete confirmation
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  // How many Sub Jobs record this crew as having claimed or completed them. Deleting
+  // the crew clears that record, so the confirmation says how much would be lost.
+  const [deleteImpact, setDeleteImpact] = useState<number | null>(null);
 
   useEffect(() => {
     fetchCrews();
@@ -175,6 +178,16 @@ export default function TeamsPage() {
       const message = err instanceof Error ? err.message : 'Failed to update crew';
       alert(message);
     }
+  }
+
+  async function startDelete(id: string) {
+    setDeletingId(id);
+    setDeleteImpact(null);
+    const { count } = await supabase
+      .from('jobs')
+      .select('*', { count: 'exact', head: true })
+      .eq('crew_id', id);
+    setDeleteImpact(count ?? 0);
   }
 
   async function handleDeleteCrew(id: string) {
@@ -705,7 +718,14 @@ export default function TeamsPage() {
 
                       {deletingId === crew.id ? (
                         <div className="flex items-center space-x-2">
-                          <span className="text-xs text-red-600">Delete?</span>
+                          <span className="max-w-[16rem] text-xs text-red-600">
+                            Delete?
+                            {deleteImpact === null
+                              ? ' Checking...'
+                              : deleteImpact > 0
+                                ? ` ${deleteImpact} Sub Job${deleteImpact !== 1 ? 's' : ''} will lose the record of this crew.`
+                                : ''}
+                          </span>
                           <button
                             onClick={() => handleDeleteCrew(crew.id)}
                             className="rounded-lg bg-red-600 px-2 py-1 text-xs font-medium text-white hover:bg-red-700"
@@ -721,7 +741,7 @@ export default function TeamsPage() {
                         </div>
                       ) : (
                         <button
-                          onClick={() => setDeletingId(crew.id)}
+                          onClick={() => startDelete(crew.id)}
                           className="rounded-lg border border-gray-300 p-2 text-gray-500 hover:bg-red-50 hover:text-red-600"
                           title="Delete"
                         >
