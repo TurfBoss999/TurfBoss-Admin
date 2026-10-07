@@ -4,6 +4,7 @@ import { useState, FormEvent } from 'react';
 import Link from 'next/link';
 import { getSupabaseBrowserClient } from '@/lib/supabaseBrowser';
 import { TurfBossLogo } from '@/components/TurfBossLogo';
+import { rememberResetEmail } from '@/lib/passwordReset';
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState('');
@@ -30,6 +31,7 @@ export default function ForgotPasswordPage() {
 
       if (resetError) throw resetError;
 
+      rememberResetEmail(email.trim());
       setSent(true);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Something went wrong. Please try again.';
@@ -61,10 +63,17 @@ export default function ForgotPasswordPage() {
               </div>
               <h2 className="mt-4 text-2xl font-bold text-gray-900">Check your email</h2>
               <p className="mt-2 text-sm text-gray-500">
-                We sent a password reset link to{' '}
+                We sent a password reset email to{' '}
                 <span className="font-medium text-gray-900">{email}</span>.
-                Click the link in the email to reset your password.
+                It has a link and a code. Use one or the other: whichever you use first cancels the
+                other. If the link does not work on your device, enter the code instead.
               </p>
+              <Link
+                href="/reset-password"
+                className="mt-4 inline-flex w-full items-center justify-center rounded-lg border border-green-600 px-4 py-3 text-sm font-medium text-green-700 transition-colors hover:bg-green-50"
+              >
+                Enter the code from the email
+              </Link>
               <p className="mt-4 text-xs text-gray-400">
                 Didn&apos;t receive it? Check your spam folder or{' '}
                 <button

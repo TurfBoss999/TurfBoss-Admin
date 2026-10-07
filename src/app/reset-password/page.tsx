@@ -1,31 +1,139 @@
 'use client';
 
-import { useState, FormEvent, useEffect } from 'react';
+import { useState, FormEvent, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { getSupabaseBrowserClient } from '@/lib/supabaseBrowser';
 import { TurfBossLogo } from '@/components/TurfBossLogo';
+import {
+  recallResetEmail,
+  classifyReason,
+  describeCodeError,
+  LINK_PROBLEM_MESSAGES,
+  type LinkProblem,
+} from '@/lib/passwordReset';
+
+// checking: looking for a recovery session from the emailed link
+// code: the link could not finish here, so ask for the emailed code instead
+// password: we have a recovery session, ask for the new password
+type Stage = 'checking' | 'code' | 'password' | 'success';
 
 export default function ResetPasswordPage() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [success, setSuccess] = useState(false);
-  const [checkingSession, setCheckingSession] = useState(true);
-  const [hasSession, setHasSession] = useState(false);
+  const [stage, setStage] = useState<Stage>('checking');
+  const [problem, setProblem] = useState<LinkProblem>('none');
+  const [email, setEmail] = useState('');
+  const [otp, setOtp] = useState('');
+  const [codeError, setCodeError] = useState('');
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [isResending, setIsResending] = useState(false);
+  const [resendNote, setResendNote] = useState('');
   const router = useRouter();
+  const checked = useRef(false);
 
-  // Verify the user has a valid recovery session
+  // Look for a recovery session. The callback has already traded the emailed link for one
+  // when the link worked; when it did not, it sends us here with the reason in the address.
   useEffect(() => {
+    if (checked.current) return;
+    checked.current = true;
+
     async function checkSession() {
+      setEmail(recallResetEmail());
+      const url = new URL(window.location.href);
+      const linkFailed = url.searchParams.get('link') === 'failed';
+      const reason = url.searchParams.get('reason');
+      // Keep the reason out of the address bar once it has been read
+      if (linkFailed) window.history.replaceState(null, '', url.pathname);
+
       const supabase = getSupabaseBrowserClient();
       const { data: { session } } = await supabase.auth.getSession();
-      setHasSession(!!session);
-      setCheckingSession(false);
+      if (session) {
+        setStage('password');
+        return;
+      }
+
+      if (linkFailed) {
+        console.error('[reset-password] link could not finish:', reason);
+        setProblem(classifyReason(reason));
+      }
+      setStage('code');
     }
-    checkSession();
+
+    checkSession().catch((err) => {
+      console.error('[reset-password] unexpected error while checking the link:', err);
+      setProblem('invalid');
+      setStage('code');
+    });
   }, []);
+
+  // A new email replaces the old one (the old link and code stop working), which is the
+  // fix when the link was opened and used up the code.
+  const handleResend = async () => {
+    setCodeError('');
+    setResendNote('');
+    if (!email.trim()) {
+      setCodeError('Enter your email address above first, then send the new email.');
+      return;
+    }
+    setIsResending(true);
+    try {
+      const supabase = getSupabaseBrowserClient();
+      const { error: sendError } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+        redirectTo: `${window.location.origin}/auth/callback?next=/reset-password`,
+      });
+      if (sendError) {
+        console.error('[reset-password] resend failed:', sendError.name, sendError.code, sendError.message);
+        setCodeError(
+          sendError.status === 429 || sendError.code === 'over_email_send_rate_limit'
+            ? 'You asked for an email a moment ago. Wait a minute, then try again.'
+            : 'We could not send the email. Check the address and try again.'
+        );
+        return;
+      }
+      setOtp('');
+      setResendNote(
+        'New email sent. Open it, read the code, and type it above. Do not open the link in the email. If you do not see it, check your spam folder.'
+      );
+    } catch (err) {
+      console.error('[reset-password] resend failed:', err);
+      setCodeError('Something went wrong. Check your connection and try again.');
+    } finally {
+      setIsResending(false);
+    }
+  };
+
+  // Finish with the code from the email. This does not depend on which browser asked
+  // for the reset.
+  const handleVerifyCode = async (e: FormEvent) => {
+    e.preventDefault();
+    setCodeError('');
+    setIsVerifying(true);
+
+    try {
+      const supabase = getSupabaseBrowserClient();
+      const { error: verifyError } = await supabase.auth.verifyOtp({
+        email: email.trim(),
+        token: otp.replace(/\s/g, ''),
+        type: 'recovery',
+      });
+
+      if (verifyError) {
+        console.error('[reset-password] code check failed:', verifyError.name, verifyError.code, verifyError.message);
+        setCodeError(describeCodeError(verifyError));
+        return;
+      }
+
+      setStage('password');
+    } catch (err) {
+      console.error('[reset-password] code check failed:', err);
+      setCodeError('Something went wrong. Check your connection and try again.');
+    } finally {
+      setIsVerifying(false);
+    }
+  };
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -51,7 +159,7 @@ export default function ResetPasswordPage() {
 
       if (updateError) throw updateError;
 
-      setSuccess(true);
+      setStage('success');
 
       // Redirect to login after a short delay
       setTimeout(() => {
@@ -65,7 +173,7 @@ export default function ResetPasswordPage() {
     }
   };
 
-  if (checkingSession) {
+  if (stage === 'checking') {
     return (
       <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900">
         <div className="flex items-center space-x-2">
@@ -79,27 +187,88 @@ export default function ResetPasswordPage() {
     );
   }
 
-  if (!hasSession && !success) {
+  if (stage === 'code') {
     return (
       <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900">
         <div className="w-full max-w-md px-4">
-          <div className="rounded-2xl bg-white p-8 shadow-2xl text-center">
-            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-red-100">
-              <svg className="h-8 w-8 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
-              </svg>
+          <div className="rounded-2xl bg-white p-8 shadow-2xl">
+            <div className="text-center">
+              <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-green-100">
+                <svg className="h-8 w-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                </svg>
+              </div>
+              <h2 className="mt-4 text-2xl font-bold text-gray-900">Enter your code</h2>
+              <p className="mt-2 text-sm text-gray-500">{LINK_PROBLEM_MESSAGES[problem]}</p>
             </div>
-            <h2 className="mt-4 text-2xl font-bold text-gray-900">Invalid or expired link</h2>
-            <p className="mt-2 text-sm text-gray-500">
-              This password reset link is invalid or has expired. Please request a new one.
-            </p>
-            <div className="mt-6 flex flex-col items-center space-y-3">
-              <Link
-                href="/forgot-password"
-                className="inline-flex w-full items-center justify-center rounded-lg bg-green-600 px-4 py-3 font-medium text-white transition-colors hover:bg-green-700"
+
+            <form onSubmit={handleVerifyCode} className="mt-6 space-y-5">
+              <div>
+                <label htmlFor="resetEmail" className="block text-sm font-medium text-gray-700">
+                  Email address
+                </label>
+                <input
+                  id="resetEmail"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  autoComplete="email"
+                  required
+                  className="mt-1 block w-full rounded-lg border border-gray-300 px-4 py-3 text-gray-900 placeholder-gray-400 focus:border-green-500 focus:outline-none focus:ring-2 focus:ring-green-200"
+                  placeholder="admin@turfboss.com"
+                />
+              </div>
+
+              <div>
+                <label htmlFor="resetCode" className="block text-sm font-medium text-gray-700">
+                  Code from the email
+                </label>
+                <input
+                  id="resetCode"
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9 ]*"
+                  autoComplete="one-time-code"
+                  value={otp}
+                  onChange={(e) => setOtp(e.target.value)}
+                  required
+                  minLength={6}
+                  maxLength={12}
+                  className="mt-1 block w-full rounded-lg border border-gray-300 px-4 py-3 tracking-widest text-gray-900 placeholder-gray-400 focus:border-green-500 focus:outline-none focus:ring-2 focus:ring-green-200"
+                  placeholder="Enter the code"
+                />
+              </div>
+
+              {codeError && (
+                <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-600">
+                  {codeError}
+                </div>
+              )}
+
+              {resendNote && (
+                <div role="status" className="rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-800">
+                  {resendNote}
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={isVerifying}
+                className="flex w-full items-center justify-center rounded-lg bg-green-600 px-4 py-3 font-medium text-white transition-colors hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                Request new link
-              </Link>
+                {isVerifying ? 'Checking...' : 'Continue'}
+              </button>
+            </form>
+
+            <div className="mt-4 flex flex-col items-center space-y-3">
+              <button
+                type="button"
+                onClick={handleResend}
+                disabled={isResending}
+                className="inline-flex w-full items-center justify-center rounded-lg border border-green-600 px-4 py-3 font-medium text-green-700 transition-colors hover:bg-green-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {isResending ? 'Sending...' : 'Send me a new email'}
+              </button>
               <Link
                 href="/login"
                 className="inline-flex items-center space-x-2 text-sm font-medium text-green-600 hover:text-green-700"
@@ -128,7 +297,7 @@ export default function ResetPasswordPage() {
 
         {/* Card */}
         <div className="rounded-2xl bg-white p-8 shadow-2xl">
-          {success ? (
+          {stage === 'success' ? (
             /* Success State */
             <div className="text-center">
               <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-green-100">

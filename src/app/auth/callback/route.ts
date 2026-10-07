@@ -6,6 +6,9 @@ export async function GET(request: NextRequest) {
   const { searchParams, origin } = new URL(request.url);
   const code = searchParams.get('code');
   const next = searchParams.get('next') ?? '/dashboard';
+  // Why the link could not be used, so the reset page can say what to do instead of
+  // dropping the person on a login screen that gives no hint.
+  let failureReason = 'no_code';
 
   if (code) {
     const cookieStore = await cookies();
@@ -33,6 +36,16 @@ export async function GET(request: NextRequest) {
     if (!error) {
       return NextResponse.redirect(`${origin}${next}`);
     }
+
+    failureReason = error.code ?? error.name ?? 'exchange_failed';
+    console.error('[auth/callback] code exchange failed:', error.name, error.code, error.message);
+  }
+
+  // A reset link that cannot finish goes to the reset page, which offers the emailed code
+  if (next === '/reset-password') {
+    return NextResponse.redirect(
+      `${origin}/reset-password?link=failed&reason=${encodeURIComponent(failureReason)}`
+    );
   }
 
   // If code exchange fails or no code, redirect to an error page
