@@ -6,14 +6,11 @@ import Link from 'next/link';
 import { getSupabaseBrowserClient } from '@/lib/supabaseBrowser';
 import { Crew, JobStatus, Property, ServiceType, SERVICE_TYPE_LABELS } from '@/types/database';
 import { getOrCreateVisit } from '@/lib/jobVisits';
+import { findPropertyByAddress, geocodeAddress, normalizeAddress } from '@/lib/properties';
 
 const ALL_SERVICE_TYPES: ServiceType[] = ['salt_lot', 'plow_lot', 'salt_walk', 'shovel_walks'];
 
 const supabase = getSupabaseBrowserClient();
-
-function normalizeAddress(value: string): string {
-  return value.trim().replace(/\s+/g, ' ');
-}
 
 export default function AddJobPage() {
   const router = useRouter();
@@ -104,30 +101,28 @@ export default function AddJobPage() {
     };
   }, [address, selectedPropertyId]);
 
+  // The Properties page links here with ?property=<id> to start a Job for that property.
+  // Read from the address bar after mount rather than with useSearchParams, which would
+  // need a Suspense boundary around the whole page.
+  useEffect(() => {
+    const propertyId = new URLSearchParams(window.location.search).get('property');
+    if (!propertyId) return;
+
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase.from('properties').select('*').eq('id', propertyId).maybeSingle();
+      if (!cancelled && data) selectPropertySuggestion(data as Property);
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   function selectPropertySuggestion(property: Property) {
     setAddress(property.address);
     setSelectedPropertyId(property.id);
     setClientName(property.client_name || '');
     setClientEmail(property.client_email || '');
     setShowSuggestions(false);
-  }
-
-  // Geocodes server-side via /api/admin/geocode so the Google API key never
-  // reaches the browser. A failed geocode is logged server-side and treated
-  // as null coordinates rather than blocking job creation.
-  async function geocodeAddress(rawAddress: string): Promise<{ lat: number | null; lng: number | null }> {
-    try {
-      const response = await fetch('/api/admin/geocode', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ address: rawAddress }),
-      });
-      const json = await response.json();
-      if (json.success) return json.data;
-    } catch {
-      // Property is still created below, just without coordinates.
-    }
-    return { lat: null, lng: null };
   }
 
   // Resolves the property to link this job to: the selected suggestion if
@@ -142,14 +137,7 @@ export default function AddJobPage() {
 
     const normalized = normalizeAddress(rawAddress);
 
-    const { data: existing, error: lookupError } = await supabase
-      .from('properties')
-      .select('id')
-      .ilike('address', normalized)
-      .limit(1)
-      .maybeSingle();
-
-    if (lookupError) throw lookupError;
+    const existing = await findPropertyByAddress(supabase, normalized);
     if (existing) {
       await applyClientInfo(existing.id);
       return existing.id;
