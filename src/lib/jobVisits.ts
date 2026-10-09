@@ -62,3 +62,13 @@ export function formatVisitDate(date: string, long = false): string {
       : { month: 'short', day: 'numeric', year: 'numeric' }
   );
 }
+
+// Today as a plain YYYY-MM-DD string in the viewer's own time zone. date columns are plain
+// strings, so compare them with this. new Date('YYYY-MM-DD') parses as UTC and would show
+// the previous day, and toISOString() also reports UTC.
+export function todayLocalISO(): string {
+  const now = new Date();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${now.getFullYear()}-${month}-${day}`;
+}

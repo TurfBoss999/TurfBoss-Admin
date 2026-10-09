@@ -6,9 +6,7 @@ import Link from 'next/link';
 import { getSupabaseBrowserClient } from '@/lib/supabaseBrowser';
 import { Crew, JobStatus, Property, ServiceType, SERVICE_TYPE_LABELS } from '@/types/database';
 import { getOrCreateVisit } from '@/lib/jobVisits';
-import { findPropertyByAddress, geocodeAddress, normalizeAddress } from '@/lib/properties';
-
-const ALL_SERVICE_TYPES: ServiceType[] = ['salt_lot', 'plow_lot', 'salt_walk', 'shovel_walks'];
+import { findPropertyByAddress, geocodeAddress, normalizeAddress, ALL_SERVICE_TYPES } from '@/lib/properties';
 
 const supabase = getSupabaseBrowserClient();
 
@@ -41,13 +39,12 @@ export default function AddJobPage() {
   const [propertySuggestions, setPropertySuggestions] = useState<Property[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [selectedPropertyId, setSelectedPropertyId] = useState<string | null>(null);
+  // The full row of the linked property, for its site map and default services
+  const [selectedProperty, setSelectedProperty] = useState<Property | null>(null);
+  // Set when the services boxes were pre-checked from the property's defaults
+  const [defaultsApplied, setDefaultsApplied] = useState(false);
   const [clientName, setClientName] = useState('');
   const [clientEmail, setClientEmail] = useState('');
-
-  // Image upload state
-  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
-  const [imagePreviews, setImagePreviews] = useState<string[]>([]);
-  const [uploadProgress, setUploadProgress] = useState<string | null>(null);
 
   // Submission state
   const [submitting, setSubmitting] = useState(false);
@@ -119,6 +116,16 @@ export default function AddJobPage() {
   function selectPropertySuggestion(property: Property) {
     setAddress(property.address);
     setSelectedPropertyId(property.id);
+    setSelectedProperty(property);
+    // Pre-check the property's default services. They stay editable for this one Job. A property
+    // with no defaults leaves whatever is already ticked alone.
+    const defaults = property.default_services ?? [];
+    if (defaults.length > 0) {
+      setSelectedServices(ALL_SERVICE_TYPES.filter((t) => defaults.includes(t)));
+      setDefaultsApplied(true);
+    } else {
+      setDefaultsApplied(false);
+    }
     setClientName(property.client_name || '');
     setClientEmail(property.client_email || '');
     setShowSuggestions(false);
@@ -180,64 +187,6 @@ export default function AddJobPage() {
     if (error) throw error;
   }
 
-  function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
-    const files = Array.from(e.target.files || []);
-    if (files.length === 0) return;
-
-    // Limit to 5 images total
-    const remaining = 5 - selectedFiles.length;
-    const newFiles = files.slice(0, remaining);
-
-    setSelectedFiles((prev) => [...prev, ...newFiles]);
-
-    // Generate previews
-    newFiles.forEach((file) => {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setImagePreviews((prev) => [...prev, reader.result as string]);
-      };
-      reader.readAsDataURL(file);
-    });
-
-    // Reset input so same file can be re-selected
-    e.target.value = '';
-  }
-
-  function removeImage(index: number) {
-    setSelectedFiles((prev) => prev.filter((_, i) => i !== index));
-    setImagePreviews((prev) => prev.filter((_, i) => i !== index));
-  }
-
-  async function uploadImages(jobId: string): Promise<string[]> {
-    const urls: string[] = [];
-
-    for (let i = 0; i < selectedFiles.length; i++) {
-      const file = selectedFiles[i];
-      setUploadProgress(`Uploading image ${i + 1} of ${selectedFiles.length}...`);
-
-      const ext = file.name.split('.').pop() || 'jpg';
-      const filePath = `${jobId}/${Date.now()}-${i}.${ext}`;
-
-      const { error: uploadError } = await supabase.storage
-        .from('job-images')
-        .upload(filePath, file, {
-          cacheControl: '3600',
-          upsert: false,
-        });
-
-      if (uploadError) throw uploadError;
-
-      const { data: urlData } = supabase.storage
-        .from('job-images')
-        .getPublicUrl(filePath);
-
-      urls.push(urlData.publicUrl);
-    }
-
-    setUploadProgress(null);
-    return urls;
-  }
-
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setFormError(null);
@@ -283,7 +232,7 @@ export default function AddJobPage() {
 
       // One Sub Job (a row in jobs) per selected service. crew_id starts empty: it is
       // filled in with whichever crew starts (claims) the Sub Job.
-      const { data: newJobs, error: insertError } = await supabase
+      const { error: insertError } = await supabase
         .from('jobs')
         .insert(
           selectedServices.map((serviceType) => ({
@@ -300,8 +249,7 @@ export default function AddJobPage() {
             service_notes: serviceNotes.trim() || null,
             skid_steer_used: serviceType === 'plow_lot' ? skidSteerUsed : false,
           }))
-        )
-        .select();
+        );
 
       if (insertError) throw insertError;
 
@@ -315,25 +263,6 @@ export default function AddJobPage() {
             { onConflict: 'job_visit_id,crew_id', ignoreDuplicates: true }
           );
         if (crewLinkError) throw crewLinkError;
-      }
-
-      // Upload images if any were selected — attached to just the first
-      // created job rather than duplicated across every service.
-      const primaryJob = newJobs?.[0];
-      if (selectedFiles.length > 0 && primaryJob) {
-        const imageUrls = await uploadImages(primaryJob.id);
-
-        if (imageUrls.length > 0) {
-          const { error: updateError } = await supabase
-            .from('jobs')
-            .update({ image_urls: imageUrls })
-            .eq('id', primaryJob.id);
-
-          if (updateError) {
-            console.error('Failed to save image URLs:', updateError);
-            // Job was created, just images weren't linked — still redirect
-          }
-        }
       }
 
       router.push('/dashboard/sites');
@@ -429,6 +358,11 @@ export default function AddJobPage() {
                   </label>
                 ))}
               </div>
+              {defaultsApplied && (
+                <p className="mt-2 text-xs text-green-700">
+                  Pre-checked from this property&apos;s default services. Change them for this Job if you need to.
+                </p>
+              )}
               {selectedServices.includes('plow_lot') && (
                 <label className="mt-3 flex cursor-pointer items-center space-x-2 text-sm text-gray-700">
                   <input
@@ -457,6 +391,8 @@ export default function AddJobPage() {
                 onChange={(e) => {
                   setAddress(e.target.value);
                   setSelectedPropertyId(null);
+                  setSelectedProperty(null);
+                  setDefaultsApplied(false);
                 }}
                 onFocus={() => setShowSuggestions(true)}
                 onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
@@ -466,6 +402,39 @@ export default function AddJobPage() {
               />
               {selectedPropertyId && (
                 <p className="mt-1 text-xs text-green-700">Linked to existing property</p>
+              )}
+              {selectedProperty && (
+                <div className="mt-3 flex items-center gap-3 rounded-lg border border-gray-200 bg-gray-50 p-3">
+                  {selectedProperty.overlay_image_url ? (
+                    <a href={selectedProperty.overlay_image_url} target="_blank" rel="noopener noreferrer" className="shrink-0">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={selectedProperty.overlay_image_url}
+                        alt="Site map"
+                        className="h-16 w-24 rounded border border-gray-200 object-cover"
+                      />
+                    </a>
+                  ) : (
+                    <div className="flex h-16 w-24 shrink-0 items-center justify-center rounded border-2 border-dashed border-gray-300 text-center text-xs text-gray-400">
+                      No site map yet
+                    </div>
+                  )}
+                  <div className="min-w-0 text-xs text-gray-600">
+                    <p className="font-medium text-gray-800">Site map</p>
+                    <p>
+                      Crews see this on every Job at this property.{' '}
+                      <Link
+                        href={`/dashboard/properties/${selectedProperty.id}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-medium text-green-700 hover:text-green-800"
+                      >
+                        {selectedProperty.overlay_image_url ? 'Change it' : 'Add one'} on the Properties page
+                      </Link>
+                      .
+                    </p>
+                  </div>
+                </div>
               )}
               {!selectedPropertyId &&
                 normalizeAddress(address).length >= 3 &&
@@ -627,99 +596,6 @@ export default function AddJobPage() {
         {/* Assignment Card */}
         <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
           <h2 className="mb-4 text-lg font-semibold text-gray-900">
-            Images
-          </h2>
-          <div className="space-y-4">
-            {/* File Input */}
-            <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">
-                Job Photos{' '}
-                <span className="text-gray-400 font-normal">
-                  (up to 5 images)
-                </span>
-              </label>
-              <label
-                htmlFor="image-upload"
-                className={`flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed px-6 py-8 transition-colors ${
-                  selectedFiles.length >= 5
-                    ? 'border-gray-200 bg-gray-50 cursor-not-allowed'
-                    : 'border-gray-300 hover:border-green-400 hover:bg-green-50'
-                }`}
-              >
-                <svg
-                  className="h-10 w-10 text-gray-400"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
-                  />
-                </svg>
-                <p className="mt-2 text-sm text-gray-600">
-                  {selectedFiles.length >= 5
-                    ? 'Maximum images reached'
-                    : 'Click to upload or drag and drop'}
-                </p>
-                <p className="mt-1 text-xs text-gray-400">
-                  PNG, JPG, WEBP up to 5MB each
-                </p>
-                <input
-                  id="image-upload"
-                  type="file"
-                  accept="image/png,image/jpeg,image/webp"
-                  multiple
-                  onChange={handleFileSelect}
-                  disabled={selectedFiles.length >= 5}
-                  className="hidden"
-                />
-              </label>
-            </div>
-
-            {/* Image Previews */}
-            {imagePreviews.length > 0 && (
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-5">
-                {imagePreviews.map((preview, index) => (
-                  <div key={index} className="group relative">
-                    <div className="aspect-square overflow-hidden rounded-lg border border-gray-200">
-                      <img
-                        src={preview}
-                        alt={`Preview ${index + 1}`}
-                        className="h-full w-full object-cover"
-                      />
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => removeImage(index)}
-                      className="absolute -right-2 -top-2 flex h-6 w-6 items-center justify-center rounded-full bg-red-500 text-white shadow-sm opacity-0 transition-opacity group-hover:opacity-100 hover:bg-red-600"
-                    >
-                      <svg
-                        className="h-3.5 w-3.5"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M6 18L18 6M6 6l12 12"
-                        />
-                      </svg>
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Assignment Card */}
-        <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
-          <h2 className="mb-4 text-lg font-semibold text-gray-900">
             Assignment
           </h2>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -824,32 +700,6 @@ export default function AddJobPage() {
         {formError && (
           <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
             {formError}
-          </div>
-        )}
-
-        {/* Upload Progress */}
-        {uploadProgress && (
-          <div className="flex items-center space-x-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700">
-            <svg
-              className="h-4 w-4 animate-spin"
-              fill="none"
-              viewBox="0 0 24 24"
-            >
-              <circle
-                className="opacity-25"
-                cx="12"
-                cy="12"
-                r="10"
-                stroke="currentColor"
-                strokeWidth="4"
-              />
-              <path
-                className="opacity-75"
-                fill="currentColor"
-                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-              />
-            </svg>
-            <span>{uploadProgress}</span>
           </div>
         )}
 

@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type { Property } from '@/types/database';
+import type { Property, ServiceType } from '@/types/database';
 
 export function normalizeAddress(value: string): string {
   return value.trim().replace(/\s+/g, ' ');
@@ -80,4 +80,52 @@ export async function copyToClipboard(text: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+// The four services a property can have as defaults, in the order they are shown everywhere
+export const ALL_SERVICE_TYPES: ServiceType[] = ['salt_lot', 'plow_lot', 'salt_walk', 'shovel_walks'];
+
+export const SITE_MAP_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
+export const SITE_MAP_MAX_BYTES = 10 * 1024 * 1024;
+
+// Uploads a site map for a property and saves its address on the property. Storage only allows
+// uploading a NEW file name (there is no overwrite or delete permission), so every upload,
+// including a replacement, gets its own timestamped name. The old file stays in Storage.
+// Returns the public address that was saved.
+export async function uploadSiteMap(
+  supabase: SupabaseClient,
+  propertyId: string,
+  file: File
+): Promise<string> {
+  if (!SITE_MAP_TYPES.includes(file.type)) {
+    throw new Error('Choose a PNG, JPG or WEBP image.');
+  }
+  if (file.size > SITE_MAP_MAX_BYTES) {
+    throw new Error('That image is larger than 10 MB. Choose a smaller one.');
+  }
+
+  const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
+  const filePath = `properties/${propertyId}/overlay-${Date.now()}.${ext}`;
+
+  const { error: uploadError } = await supabase.storage
+    .from('job-images')
+    .upload(filePath, file, { cacheControl: '3600', upsert: false });
+  if (uploadError) throw uploadError;
+
+  const { data: urlData } = supabase.storage.from('job-images').getPublicUrl(filePath);
+
+  // Ask for the saved row back: row-level security skips a row it will not let you update
+  // without raising an error, and no row back means nothing was saved.
+  const { data: saved, error: updateError } = await supabase
+    .from('properties')
+    .update({ overlay_image_url: urlData.publicUrl, updated_at: new Date().toISOString() })
+    .eq('id', propertyId)
+    .select('id')
+    .maybeSingle();
+  if (updateError) throw updateError;
+  if (!saved) {
+    throw new Error('The image was uploaded but the property was not updated. You may not have permission, or it no longer exists.');
+  }
+
+  return urlData.publicUrl;
 }
