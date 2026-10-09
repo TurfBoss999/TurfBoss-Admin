@@ -188,3 +188,33 @@ export interface UpdateCrewDto {
   truck_number?: string;
   is_active?: boolean;
 }
+
+// ---- Mass rescheduling (the mass_reschedule_* database functions) ----
+// A "Job" here is a job_visits row; dates are plain YYYY-MM-DD strings.
+export type RescheduleMode = 'move' | 'copy';
+
+export interface ReschedulePreviewRow {
+  visit_id: string;
+  address: string | null;
+  source_date: string;
+  action: 'move' | 'copy' | 'skip';
+  reason: string | null;
+  sub_job_count: number;
+  crews_carried: number;
+  inactive_crews_skipped: number;
+}
+
+export interface RescheduleResult {
+  mode: RescheduleMode;
+  target_date: string;
+  moved_jobs: number;
+  moved_sub_jobs: number;
+  copied_jobs: number;
+  created_sub_jobs: number;
+  crews_carried: number;
+  inactive_crews_skipped: number;
+  skipped_count: number;
+  moved: string[];
+  created: { source_job_id: string; new_job_id: string }[];
+  skipped: { job_id: string; address: string | null; reason: string }[];
+}

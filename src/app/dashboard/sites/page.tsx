@@ -1,10 +1,11 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { getSupabaseBrowserClient } from '@/lib/supabaseBrowser';
-import { Crew, JobStatus, JobVisitWithDetails, SERVICE_TYPE_LABELS } from '@/types/database';
+import { Crew, JobStatus, JobVisitWithDetails, RescheduleMode, SERVICE_TYPE_LABELS } from '@/types/database';
 import StatusBadge from '@/components/StatusBadge';
+import MassRescheduleModal from '@/components/MassRescheduleModal';
 import { badgeStatus, formatVisitDate, isAvailable, visitStatus } from '@/lib/jobVisits';
 
 type StatusFilter = 'All' | 'scheduled' | 'in_progress' | 'completed' | 'cancelled';
@@ -40,13 +41,23 @@ export default function JobsPage() {
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('All');
+  // Plain YYYY-MM-DD strings, compared as text (see formatVisitDate for why)
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [rescheduleMode, setRescheduleMode] = useState<RescheduleMode | null>(null);
+  // Bumped to reload the list from the database, for example after a batch is applied
+  const [reloadKey, setReloadKey] = useState(0);
+  // The full-page spinner is for the first load only. A reload after a batch must leave the page
+  // (and the dialog showing its result) in place, not swap everything for a spinner.
+  const hasLoadedOnce = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
 
     async function fetchJobs() {
       try {
-        setLoading(true);
+        if (!hasLoadedOnce.current) setLoading(true);
         setError(null);
 
         const { data, error: fetchError } = await supabase
@@ -59,6 +70,7 @@ export default function JobsPage() {
 
         // A visit with no Sub Jobs (left behind by a failed create) isn't a Job anyone can act on.
         setVisits((data as JobVisitWithDetails[]).filter((v) => v.jobs.length > 0));
+        hasLoadedOnce.current = true;
       } catch (err) {
         if (cancelled) return;
         const message = err instanceof Error ? err.message : 'Failed to fetch jobs';
@@ -70,7 +82,7 @@ export default function JobsPage() {
 
     fetchJobs();
     return () => { cancelled = true; };
-  }, []);
+  }, [reloadKey]);
   const filteredVisits = visits.filter((visit) => {
     const q = searchQuery.toLowerCase();
     const matchesSearch =
@@ -78,9 +90,32 @@ export default function JobsPage() {
       visit.jobs.some((job) => SERVICE_TYPE_LABELS[job.service_type].toLowerCase().includes(q));
 
     const matchesStatus = statusFilter === 'All' || visitStatus(visit.jobs) === statusFilter;
+    const matchesDate = (!dateFrom || visit.date >= dateFrom) && (!dateTo || visit.date <= dateTo);
 
-    return matchesSearch && matchesStatus;
+    return matchesSearch && matchesStatus && matchesDate;
   });
+
+  // Only Jobs that are on screen can be selected: when a filter hides a Job it drops out of the
+  // selection, so a batch never touches a Job the person cannot see.
+  const shownIds = filteredVisits.map((v) => v.id);
+  const shownKey = shownIds.join(',');
+  useEffect(() => {
+    setSelected((prev) => {
+      const shown = new Set(shownKey ? shownKey.split(',') : []);
+      const next = new Set(Array.from(prev).filter((id) => shown.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [shownKey]);
+
+  const allShownSelected = shownIds.length > 0 && shownIds.every((id) => selected.has(id));
+  const toggleOne = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const toggleAllShown = () => setSelected(allShownSelected ? new Set() : new Set(shownIds));
   const statusCounts = {
     All: visits.length,
     scheduled: visits.filter((v) => visitStatus(v.jobs) === 'scheduled').length,
@@ -151,6 +186,35 @@ export default function JobsPage() {
           </svg>
         </div>
 
+        {/* Date range */}
+        <div className="flex flex-wrap items-center gap-2 text-sm text-gray-600">
+          <label className="flex items-center gap-1.5">
+            From
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+              aria-label="Show Jobs from this date"
+              className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
+            />
+          </label>
+          <label className="flex items-center gap-1.5">
+            To
+            <input
+              type="date"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+              aria-label="Show Jobs up to this date"
+              className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
+            />
+          </label>
+          {(dateFrom || dateTo) && (
+            <button onClick={() => { setDateFrom(''); setDateTo(''); }} className="font-medium text-green-600 hover:text-green-700">
+              Clear dates
+            </button>
+          )}
+        </div>
+
         {/* Status Filter Tabs */}
         <div className="flex flex-wrap gap-1 rounded-lg bg-gray-100 p-1">
           {(['All', 'scheduled', 'in_progress', 'completed'] as StatusFilter[]).map((status) => (
@@ -174,12 +238,30 @@ export default function JobsPage() {
         </div>
       </div>
 
+      {shownIds.length > 0 && (
+        <div className="flex items-center justify-between text-sm">
+          <button onClick={toggleAllShown} className="font-medium text-green-600 hover:text-green-700">
+            {allShownSelected ? `Clear selection (${shownIds.length})` : `Select all ${shownIds.length} shown`}
+          </button>
+          <span className="text-gray-500">Tick Jobs to move or copy them to another date</span>
+        </div>
+      )}
+
       {/* Jobs - Desktop */}
       <div className="hidden md:block overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
+                <th className="w-12 px-4 py-4">
+                  <input
+                    type="checkbox"
+                    checked={allShownSelected}
+                    onChange={toggleAllShown}
+                    aria-label={`Select all ${shownIds.length} Jobs shown`}
+                    className="h-4 w-4 rounded border-gray-300 text-green-600 focus:ring-green-500"
+                  />
+                </th>
                 <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Property</th>
                 <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Date</th>
                 <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Crew</th>
@@ -189,13 +271,22 @@ export default function JobsPage() {
             <tbody className="divide-y divide-gray-200 bg-white">
               {filteredVisits.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="px-6 py-12 text-center text-gray-500">
+                  <td colSpan={5} className="px-6 py-12 text-center text-gray-500">
                     No jobs found
                   </td>
                 </tr>
               ) : (
                 filteredVisits.map((visit) => (
-                  <tr key={visit.id} className="hover:bg-gray-50 transition-colors align-top">
+                  <tr key={visit.id} className={`transition-colors align-top ${selected.has(visit.id) ? 'bg-green-50' : 'hover:bg-gray-50'}`}>
+                    <td className="w-12 px-4 py-4">
+                      <input
+                        type="checkbox"
+                        checked={selected.has(visit.id)}
+                        onChange={() => toggleOne(visit.id)}
+                        aria-label={`Select ${visitAddress(visit)}`}
+                        className="h-4 w-4 rounded border-gray-300 text-green-600 focus:ring-green-500"
+                      />
+                    </td>
                     <td className="px-6 py-4">
                       <Link href={`/dashboard/visits/${visit.id}`} className="group flex items-center">
                         <div className="h-10 w-10 flex-shrink-0">
@@ -249,7 +340,16 @@ export default function JobsPage() {
           </div>
         ) : (
           filteredVisits.map((visit) => (
-            <div key={visit.id} className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+            <div key={visit.id} className={`rounded-xl border p-4 shadow-sm ${selected.has(visit.id) ? 'border-green-300 bg-green-50' : 'border-gray-200 bg-white'}`}>
+              <label className="mb-2 flex items-center gap-2 text-xs font-medium text-gray-500">
+                <input
+                  type="checkbox"
+                  checked={selected.has(visit.id)}
+                  onChange={() => toggleOne(visit.id)}
+                  className="h-4 w-4 rounded border-gray-300 text-green-600 focus:ring-green-500"
+                />
+                Select this Job
+              </label>
               <Link href={`/dashboard/visits/${visit.id}`} className="flex items-start space-x-3">
                 <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-green-100 text-green-600">
                   <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -289,6 +389,44 @@ export default function JobsPage() {
       <div className="text-sm text-gray-500">
         Showing {filteredVisits.length} of {visits.length} Job{visits.length !== 1 ? 's' : ''}
       </div>
+
+      {/* Selection bar */}
+      {selected.size > 0 && (
+        <div
+          role="region"
+          aria-label="Selected Jobs"
+          className="sticky bottom-4 z-30 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-green-200 bg-white px-4 py-3 shadow-lg"
+        >
+          <span className="text-sm font-medium text-gray-900">{selected.size} selected</span>
+          <div className="flex flex-wrap items-center gap-2">
+            <button onClick={() => setRescheduleMode('move')} className="rounded-lg bg-green-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-green-700">
+              Move to date
+            </button>
+            <button onClick={() => setRescheduleMode('copy')} className="rounded-lg border border-green-600 px-3 py-1.5 text-sm font-medium text-green-700 hover:bg-green-50">
+              Copy to date
+            </button>
+            <button onClick={() => setSelected(new Set())} className="px-2 py-1.5 text-sm font-medium text-gray-600 hover:text-gray-900">
+              Clear
+            </button>
+          </div>
+        </div>
+      )}
+
+      {rescheduleMode && (
+        <MassRescheduleModal
+          visitIds={Array.from(selected)}
+          initialMode={rescheduleMode}
+          onClose={() => setRescheduleMode(null)}
+          onApplied={() => { setSelected(new Set()); setReloadKey((k) => k + 1); }}
+          onShowDate={(date) => {
+            setSearchQuery('');
+            setStatusFilter('All');
+            setDateFrom(date);
+            setDateTo(date);
+            setRescheduleMode(null);
+          }}
+        />
+      )}
     </div>
   );
 }
