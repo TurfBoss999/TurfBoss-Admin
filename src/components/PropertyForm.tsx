@@ -4,13 +4,14 @@ import { useState, FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { getSupabaseBrowserClient } from '@/lib/supabaseBrowser';
-import { Property } from '@/types/database';
+import { Property, ServiceType, SERVICE_TYPE_LABELS } from '@/types/database';
 import {
   normalizeAddress,
   findPropertyByAddress,
   geocodeAddress,
   cleanEmail,
   emailProblem,
+  ALL_SERVICE_TYPES,
 } from '@/lib/properties';
 
 const supabase = getSupabaseBrowserClient();
@@ -30,6 +31,7 @@ export default function PropertyForm({ property, onSaved }: PropertyFormProps) {
   const [clientName, setClientName] = useState(property?.client_name ?? '');
   const [clientEmail, setClientEmail] = useState(property?.client_email ?? '');
   const [notes, setNotes] = useState(property?.notes ?? '');
+  const [defaultServices, setDefaultServices] = useState<ServiceType[]>(property?.default_services ?? []);
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -82,6 +84,7 @@ export default function PropertyForm({ property, onSaved }: PropertyFormProps) {
         client_name: clientName.trim() || null,
         client_email: cleanEmail(clientEmail) || null,
         notes: notes.trim() || null,
+        default_services: defaultServices,
       };
 
       if (!property) {
@@ -170,6 +173,36 @@ export default function PropertyForm({ property, onSaved }: PropertyFormProps) {
           />
         </div>
       </div>
+
+      <fieldset>
+        <legend className="block text-sm font-medium text-gray-700">
+          Default services <span className="font-normal text-gray-500">(pre-checked on a new Job for this property)</span>
+        </legend>
+        <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {ALL_SERVICE_TYPES.map((type) => (
+            <label
+              key={type}
+              className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm ${
+                defaultServices.includes(type)
+                  ? 'border-green-500 bg-green-50 text-green-800'
+                  : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+              }`}
+            >
+              <input
+                type="checkbox"
+                checked={defaultServices.includes(type)}
+                onChange={() =>
+                  setDefaultServices((prev) =>
+                    prev.includes(type) ? prev.filter((t) => t !== type) : [...prev, type]
+                  )
+                }
+                className="h-4 w-4 rounded border-gray-300 text-green-600 focus:ring-green-500"
+              />
+              <span>{SERVICE_TYPE_LABELS[type]}</span>
+            </label>
+          ))}
+        </div>
+      </fieldset>
 
       <div>
         <label htmlFor="notes" className="block text-sm font-medium text-gray-700">

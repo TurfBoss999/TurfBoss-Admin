@@ -14,6 +14,7 @@ const PHOTO_TYPE_LABELS: Record<PhotoType, string> = {
 
 const ALL_SERVICE_TYPES: ServiceType[] = ['salt_lot', 'plow_lot', 'salt_walk', 'shovel_walks'];
 import StatusBadge from '@/components/StatusBadge';
+import SiteMapField from '@/components/SiteMapField';
 import { badgeStatus, isAvailable } from '@/lib/jobVisits';
 
 const STATUS_DISPLAY: Record<JobStatus, string> = {
@@ -48,9 +49,6 @@ export default function JobDetailPage() {
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [updatingSkidSteer, setUpdatingSkidSteer] = useState(false);
 
-  // Property overlay upload state
-  const [uploadingOverlay, setUploadingOverlay] = useState(false);
-  const [overlayError, setOverlayError] = useState<string | null>(null);
 
   // Edit modal state
   const [showEditModal, setShowEditModal] = useState(false);
@@ -266,48 +264,6 @@ export default function JobDetailPage() {
       alert(message);
     } finally {
       setUpdatingSkidSteer(false);
-    }
-  }
-
-  // Uploads a new (or replacement) overlay image for the linked property.
-  // Stored at the property level, not the job, since the same overlay
-  // applies across every repeat-visit job at that address.
-  async function handleOverlayUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file || !job?.property_id) return;
-
-    setOverlayError(null);
-    setUploadingOverlay(true);
-
-    try {
-      const ext = file.name.split('.').pop() || 'jpg';
-      const filePath = `properties/${job.property_id}/overlay-${Date.now()}.${ext}`;
-
-      const { error: uploadError } = await supabase.storage
-        .from('job-images')
-        .upload(filePath, file, { cacheControl: '3600', upsert: false });
-
-      if (uploadError) throw uploadError;
-
-      const { data: urlData } = supabase.storage.from('job-images').getPublicUrl(filePath);
-
-      const { error: updateError } = await supabase
-        .from('properties')
-        .update({ overlay_image_url: urlData.publicUrl, updated_at: new Date().toISOString() })
-        .eq('id', job.property_id);
-
-      if (updateError) throw updateError;
-
-      setJob((prev) =>
-        prev && prev.property
-          ? { ...prev, property: { ...prev.property, overlay_image_url: urlData.publicUrl } }
-          : prev
-      );
-    } catch (err) {
-      setOverlayError(err instanceof Error ? err.message : 'Failed to upload overlay image');
-    } finally {
-      setUploadingOverlay(false);
     }
   }
 
@@ -570,55 +526,20 @@ export default function JobDetailPage() {
             </div>
           )}
 
-          {/* Property Overlay Card */}
+          {/* Site map Card (the map belongs to the property; crews see it on every Job there) */}
           {job.property && (
             <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
-              <div className="mb-4 flex items-center justify-between">
-                <h2 className="text-lg font-semibold text-gray-900">Property Overlay</h2>
-                <label
-                  className={`cursor-pointer text-sm font-medium ${
-                    uploadingOverlay
-                      ? 'text-gray-400'
-                      : 'text-green-600 hover:text-green-700'
-                  }`}
-                >
-                  {uploadingOverlay
-                    ? 'Uploading...'
-                    : job.property.overlay_image_url
-                      ? 'Replace'
-                      : 'Upload'}
-                  <input
-                    type="file"
-                    accept="image/png,image/jpeg,image/webp"
-                    disabled={uploadingOverlay}
-                    onChange={handleOverlayUpload}
-                    className="hidden"
-                  />
-                </label>
-              </div>
-
-              {job.property.overlay_image_url ? (
-                <a
-                  href={job.property.overlay_image_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="block aspect-video overflow-hidden rounded-lg border border-gray-200"
-                >
-                  <img
-                    src={job.property.overlay_image_url}
-                    alt="Property overlay"
-                    className="h-full w-full object-cover"
-                  />
-                </a>
-              ) : (
-                <div className="flex aspect-video items-center justify-center rounded-lg border-2 border-dashed border-gray-200 text-sm text-gray-400">
-                  No overlay image uploaded yet
-                </div>
-              )}
-
-              {overlayError && (
-                <p className="mt-2 text-sm text-red-600">{overlayError}</p>
-              )}
+              <SiteMapField
+                propertyId={job.property.id}
+                url={job.property.overlay_image_url}
+                onChange={(url) =>
+                  setJob((prev) =>
+                    prev && prev.property
+                      ? { ...prev, property: { ...prev.property, overlay_image_url: url } }
+                      : prev
+                  )
+                }
+              />
             </div>
           )}
 

@@ -34,7 +34,11 @@ export interface Property {
   lat: number | null;
   lng: number | null;
   notes: string | null;
+  // The property's site map: the picture that shows crews which areas to work. Managed on the
+  // Properties page and shown to crews on every Job at this property.
   overlay_image_url: string | null;
+  // Services this property normally gets (pre-checked on a New Job, used by "Create Jobs for a date")
+  default_services: ServiceType[];
   client_name: string | null;
   client_email: string | null;
   created_at: string;
@@ -230,4 +234,23 @@ export interface AssignRouteResult {
   crew_assignments_added: number;
   crew_assignments_removed: number;
   crews_kept_because_started: number;
+}
+
+// "Create Jobs for a date" (create_jobs_for_date_preview / _apply)
+export interface CreateJobsPreviewRow {
+  property_id: string;
+  address: string | null;
+  action: 'create' | 'skip';
+  reason: string | null;
+  services: ServiceType[];
+  service_count: number;
+}
+
+export interface CreateJobsResult {
+  target_date: string;
+  created_jobs: number;
+  created_sub_jobs: number;
+  skipped_count: number;
+  created: { property_id: string; new_job_id: string; address: string | null; services: ServiceType[] }[];
+  skipped: { property_id: string; address: string | null; reason: string }[];
 }

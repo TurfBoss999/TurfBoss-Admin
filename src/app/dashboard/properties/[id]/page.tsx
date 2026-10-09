@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { getSupabaseBrowserClient } from '@/lib/supabaseBrowser';
 import { Property } from '@/types/database';
 import PropertyForm from '@/components/PropertyForm';
+import SiteMapField from '@/components/SiteMapField';
 import { formatVisitDate } from '@/lib/jobVisits';
 import { copyToClipboard, needsLocation, statusLinkFor } from '@/lib/properties';
 
@@ -188,6 +189,15 @@ export default function PropertyDetailPage() {
         </p>
       </div>
 
+      {/* Site map */}
+      <div className="max-w-2xl rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
+        <SiteMapField
+          propertyId={property.id}
+          url={property.overlay_image_url}
+          onChange={(url) => setProperty((prev) => (prev ? { ...prev, overlay_image_url: url } : prev))}
+        />
+      </div>
+
       {/* Delete */}
       <div className="max-w-2xl rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
         <h2 className="text-lg font-semibold text-gray-900">Delete property</h2>
@@ -209,7 +219,7 @@ export default function PropertyDetailPage() {
               Delete this property? This cannot be undone.
               {emailCount > 0 &&
                 ` ${emailCount} email${emailCount !== 1 ? 's' : ''} sent about it will stay in the email history, but will no longer show this property.`}
-              {property.overlay_image_url && ' Its overlay image file stays in storage.'}
+              {property.overlay_image_url && ' Its site map file stays in storage.'}
             </p>
             {deleteError && (
               <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
