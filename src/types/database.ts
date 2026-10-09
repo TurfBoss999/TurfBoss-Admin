@@ -76,6 +76,9 @@ export interface JobVisit {
   id: string;
   property_id: string;
   date: string;
+  // Stop number on the day's route (1 = first stop). Null until the Job is planned on the Routes
+  // page, and set back to null whenever the Job's date changes.
+  route_order?: number | null;
   created_at: string;
 }
 
@@ -217,4 +220,14 @@ export interface RescheduleResult {
   moved: string[];
   created: { source_job_id: string; new_job_id: string }[];
   skipped: { job_id: string; address: string | null; reason: string }[];
+}
+
+// What assign_route_groups returns after saving a route plan
+export interface AssignRouteResult {
+  groups: number;
+  jobs: number;
+  route_orders_set: number;
+  crew_assignments_added: number;
+  crew_assignments_removed: number;
+  crews_kept_because_started: number;
 }
