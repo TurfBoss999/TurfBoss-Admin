@@ -62,6 +62,7 @@ export default function DashboardPage() {
     totalJobs: visits.length,
     activeJobs: visits.filter((v) => visitStatus(v.jobs) === 'in_progress').length,
     scheduledJobs: visits.filter((v) => visitStatus(v.jobs) === 'scheduled').length,
+    activeCrews: crews.filter((c) => c.is_active).length,
     totalCrews: crews.length,
   };
 
@@ -143,8 +144,9 @@ export default function DashboardPage() {
           }
         />
         <StatCard
-          title="Total Crews"
-          value={stats.totalCrews}
+          title="Active Crews"
+          value={stats.activeCrews}
+          subtitle={`${stats.totalCrews} total`}
           color="purple"
           icon={
             <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">

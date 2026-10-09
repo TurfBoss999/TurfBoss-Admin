@@ -24,6 +24,8 @@ export interface Crew {
   name: string;
   phone: string | null;
   truck_number: string | null;
+  // A resting crew drops out of assignment pickers but keeps its history and its login
+  is_active: boolean;
 }
 
 export interface Property {
@@ -74,6 +76,9 @@ export interface JobVisit {
   id: string;
   property_id: string;
   date: string;
+  // Stop number on the day's route (1 = first stop). Null until the Job is planned on the Routes
+  // page, and set back to null whenever the Job's date changes.
+  route_order?: number | null;
   created_at: string;
 }
 
@@ -184,4 +189,45 @@ export interface UpdateCrewDto {
   name?: string;
   phone?: string;
   truck_number?: string;
+  is_active?: boolean;
+}
+
+// ---- Mass rescheduling (the mass_reschedule_* database functions) ----
+// A "Job" here is a job_visits row; dates are plain YYYY-MM-DD strings.
+export type RescheduleMode = 'move' | 'copy';
+
+export interface ReschedulePreviewRow {
+  visit_id: string;
+  address: string | null;
+  source_date: string;
+  action: 'move' | 'copy' | 'skip';
+  reason: string | null;
+  sub_job_count: number;
+  crews_carried: number;
+  inactive_crews_skipped: number;
+}
+
+export interface RescheduleResult {
+  mode: RescheduleMode;
+  target_date: string;
+  moved_jobs: number;
+  moved_sub_jobs: number;
+  copied_jobs: number;
+  created_sub_jobs: number;
+  crews_carried: number;
+  inactive_crews_skipped: number;
+  skipped_count: number;
+  moved: string[];
+  created: { source_job_id: string; new_job_id: string }[];
+  skipped: { job_id: string; address: string | null; reason: string }[];
+}
+
+// What assign_route_groups returns after saving a route plan
+export interface AssignRouteResult {
+  groups: number;
+  jobs: number;
+  route_orders_set: number;
+  crew_assignments_added: number;
+  crew_assignments_removed: number;
+  crews_kept_because_started: number;
 }

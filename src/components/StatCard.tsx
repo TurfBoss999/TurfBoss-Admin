@@ -3,6 +3,8 @@ interface StatCardProps {
   value: number | string;
   icon: React.ReactNode;
   color: 'green' | 'blue' | 'yellow' | 'purple';
+  // Optional small line under the number, for example "6 total"
+  subtitle?: string;
 }
 
 const colorClasses = {
@@ -19,13 +21,14 @@ const bgGradients = {
   purple: 'from-purple-500 to-purple-600',
 };
 
-export default function StatCard({ title, value, icon, color }: StatCardProps) {
+export default function StatCard({ title, value, icon, color, subtitle }: StatCardProps) {
   return (
     <div className="rounded-xl bg-white p-6 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
       <div className="flex items-center justify-between">
         <div>
           <p className="text-sm font-medium text-gray-500">{title}</p>
           <p className="mt-2 text-3xl font-bold text-gray-900">{value}</p>
+          {subtitle && <p className="mt-1 text-xs text-gray-500">{subtitle}</p>}
         </div>
         <div className={`flex h-12 w-12 items-center justify-center rounded-xl ${colorClasses[color]}`}>
           {icon}
