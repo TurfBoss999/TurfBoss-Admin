@@ -53,6 +53,13 @@ export default function RoutesPage() {
   // The group count follows the number of active crews until the person types their own
   const groupCountTouched = useRef(false);
 
+  // "Create Jobs for a date" links here with ?date=YYYY-MM-DD so the planner opens on that day. Read from
+  // the address bar after mount rather than with useSearchParams, which would need a Suspense boundary.
+  useEffect(() => {
+    const fromLink = new URLSearchParams(window.location.search).get('date');
+    if (fromLink && /^\d{4}-\d{2}-\d{2}$/.test(fromLink)) setDate(fromLink);
+  }, []);
+
   // Active crews, in a stable order (by name)
   const activeCrews = useMemo(
     () => crews.filter((c) => c.is_active).sort((a, b) => a.name.localeCompare(b.name)),
