@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { getSupabaseBrowserClient } from '@/lib/supabaseBrowser';
 import { Crew } from '@/types/database';
+import { todayLocalISO } from '@/lib/jobVisits';
 
 const supabase = getSupabaseBrowserClient();
 
@@ -37,6 +38,17 @@ export default function TeamsPage() {
   // How many Sub Jobs record this crew as having claimed or completed them. Deleting
   // the crew clears that record, so the confirmation says how much would be lost.
   const [deleteImpact, setDeleteImpact] = useState<number | null>(null);
+
+  // Active / inactive: a resting crew keeps its history and login but drops out of pickers
+  const [crewFilter, setCrewFilter] = useState<'all' | 'active' | 'inactive'>('all');
+  const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [checkingId, setCheckingId] = useState<string | null>(null);
+  // Set while the "this crew has upcoming work" warning is showing
+  const [deactivateWarning, setDeactivateWarning] = useState<{
+    crew: Crew;
+    jobCount: number;
+    addresses: string[];
+  } | null>(null);
 
   useEffect(() => {
     fetchCrews();
@@ -180,6 +192,82 @@ export default function TeamsPage() {
     }
   }
 
+  // Upcoming Jobs (today or later) this crew is assigned to that still have open Sub Jobs
+  async function findUpcomingWork(crewId: string) {
+    const { data, error: fetchError } = await supabase
+      .from('job_visits')
+      .select('id, date, property:properties(address), jobs(status, address), job_visit_crews!inner(crew_id)')
+      .eq('job_visit_crews.crew_id', crewId)
+      .gte('date', todayLocalISO())
+      .order('date', { ascending: true });
+
+    if (fetchError) throw fetchError;
+
+    type UpcomingVisit = {
+      property: { address: string } | null;
+      jobs: { status: string; address: string }[];
+    };
+    const open = ((data ?? []) as unknown as UpcomingVisit[]).filter((v) =>
+      v.jobs.some((j) => j.status === 'scheduled' || j.status === 'in_progress')
+    );
+    return {
+      jobCount: open.length,
+      addresses: open.map((v) => v.property?.address || v.jobs[0]?.address || 'Unknown property'),
+    };
+  }
+
+  // Optimistic: show the change at once and put it back if the save fails. The save asks
+  // for the changed row back, because row-level security skips a row it will not let you
+  // update without raising an error. No row back means nothing was saved.
+  async function setCrewActive(crew: Crew, active: boolean) {
+    setTogglingId(crew.id);
+    setDeactivateWarning(null);
+    setCrews((prev) => prev.map((c) => (c.id === crew.id ? { ...c, is_active: active } : c)));
+
+    try {
+      const { data, error: updateError } = await supabase
+        .from('crews')
+        .update({ is_active: active })
+        .eq('id', crew.id)
+        .select('id');
+
+      if (updateError) throw updateError;
+      if (!data || data.length === 0) {
+        throw new Error('The change was not saved. You may not have permission, or this team no longer exists.');
+      }
+    } catch (err) {
+      setCrews((prev) => prev.map((c) => (c.id === crew.id ? { ...c, is_active: crew.is_active } : c)));
+      const message = err instanceof Error ? err.message : 'Failed to update team';
+      alert(message);
+    } finally {
+      setTogglingId(null);
+    }
+  }
+
+  async function handleToggleActive(crew: Crew) {
+    if (!crew.is_active) {
+      await setCrewActive(crew, true);
+      return;
+    }
+
+    // Turning a crew off: look for upcoming work first, and ask before going ahead
+    setCheckingId(crew.id);
+    try {
+      const work = await findUpcomingWork(crew.id);
+      if (work.jobCount > 0) {
+        setDeactivateWarning({ crew, ...work });
+        return;
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Could not check for upcoming work';
+      alert(`${message}. The team was not changed.`);
+      return;
+    } finally {
+      setCheckingId(null);
+    }
+    await setCrewActive(crew, false);
+  }
+
   async function startDelete(id: string) {
     setDeletingId(id);
     setDeleteImpact(null);
@@ -216,6 +304,10 @@ export default function TeamsPage() {
     setEditPhone(crew.phone || '');
     setEditTruckNumber(crew.truck_number || '');
   }
+
+  const visibleCrews = crews.filter((c) =>
+    crewFilter === 'all' ? true : crewFilter === 'active' ? c.is_active : !c.is_active
+  );
 
   if (loading) {
     return (
@@ -588,10 +680,25 @@ export default function TeamsPage() {
 
       {/* Teams List */}
       <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
-        <div className="border-b border-gray-200 px-6 py-4">
+        <div className="flex flex-col gap-3 border-b border-gray-200 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
           <h2 className="text-lg font-semibold text-gray-900">
-            All Teams ({crews.length})
+            Teams ({crews.filter((c) => c.is_active).length} active of {crews.length})
           </h2>
+          <div className="inline-flex rounded-lg border border-gray-200 p-0.5 text-sm" role="group" aria-label="Filter teams">
+            {(['all', 'active', 'inactive'] as const).map((f) => (
+              <button
+                key={f}
+                type="button"
+                onClick={() => setCrewFilter(f)}
+                aria-pressed={crewFilter === f}
+                className={`rounded-md px-3 py-1 font-medium capitalize transition-colors ${
+                  crewFilter === f ? 'bg-green-600 text-white' : 'text-gray-600 hover:bg-gray-100'
+                }`}
+              >
+                {f}
+              </button>
+            ))}
+          </div>
         </div>
 
         {crews.length === 0 ? (
@@ -617,11 +724,13 @@ export default function TeamsPage() {
               Add your first team
             </button>
           </div>
+        ) : visibleCrews.length === 0 ? (
+          <p className="px-6 py-10 text-center text-sm text-gray-500">No {crewFilter} teams.</p>
         ) : (
           <div className="divide-y divide-gray-200">
-            {crews.map((crew) => (
+            {visibleCrews.map((crew) => (
+              <div key={crew.id}>
               <div
-                key={crew.id}
                 className="flex flex-col gap-3 px-4 py-4 transition-colors hover:bg-gray-50 sm:flex-row sm:items-center sm:justify-between sm:px-6"
               >
                 {editingId === crew.id ? (
@@ -666,7 +775,7 @@ export default function TeamsPage() {
                 ) : (
                   /* View Mode */
                   <>
-                    <div className="flex items-center space-x-4">
+                    <div className={`flex items-center space-x-4 ${crew.is_active ? '' : 'opacity-60'}`}>
                       <div className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-100 text-blue-600">
                         <svg
                           className="h-5 w-5"
@@ -683,7 +792,14 @@ export default function TeamsPage() {
                         </svg>
                       </div>
                       <div>
-                        <p className="font-medium text-gray-900">{crew.name}</p>
+                        <p className="font-medium text-gray-900">
+                          {crew.name}
+                          {!crew.is_active && (
+                            <span className="ml-2 rounded bg-gray-200 px-1.5 py-0.5 text-xs font-normal text-gray-600">
+                              Inactive
+                            </span>
+                          )}
+                        </p>
                         <p className="text-sm text-gray-500">
                           {crew.phone || 'No phone'}
                           {crew.truck_number && (
@@ -696,6 +812,24 @@ export default function TeamsPage() {
                     </div>
 
                     <div className="flex items-center space-x-2">
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={crew.is_active}
+                        aria-label={`${crew.name} is ${crew.is_active ? 'active' : 'inactive'}. Click to switch ${crew.is_active ? 'off' : 'on'}.`}
+                        onClick={() => handleToggleActive(crew)}
+                        disabled={togglingId === crew.id || checkingId === crew.id}
+                        className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors disabled:cursor-wait disabled:opacity-50 ${
+                          crew.is_active ? 'bg-green-600' : 'bg-gray-300'
+                        }`}
+                      >
+                        <span
+                          className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${
+                            crew.is_active ? 'translate-x-5' : 'translate-x-0.5'
+                          }`}
+                        />
+                      </button>
+                      <span className="w-14 text-xs text-gray-500">{crew.is_active ? 'Active' : 'Inactive'}</span>
                       <button
                         onClick={() => startEditing(crew)}
                         className="rounded-lg border border-gray-300 p-2 text-gray-500 hover:bg-gray-100 hover:text-gray-700"
@@ -725,6 +859,7 @@ export default function TeamsPage() {
                               : deleteImpact > 0
                                 ? ` ${deleteImpact} Sub Job${deleteImpact !== 1 ? 's' : ''} will lose the record of this crew.`
                                 : ''}
+                            {deleteImpact !== null && ' Deactivate instead to keep history.'}
                           </span>
                           <button
                             onClick={() => handleDeleteCrew(crew.id)}
@@ -763,6 +898,43 @@ export default function TeamsPage() {
                     </div>
                   </>
                 )}
+              </div>
+              {deactivateWarning?.crew.id === crew.id && (
+                <div role="alert" className="mx-4 mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 sm:mx-6">
+                  <p className="font-medium">
+                    {crew.name} is assigned to {deactivateWarning.jobCount} upcoming Job
+                    {deactivateWarning.jobCount !== 1 ? 's' : ''} with work still to do.
+                  </p>
+                  <ul className="mt-2 list-disc space-y-0.5 pl-5">
+                    {deactivateWarning.addresses.slice(0, 3).map((address, i) => (
+                      <li key={i}>{address}</li>
+                    ))}
+                  </ul>
+                  {deactivateWarning.jobCount > 3 && (
+                    <p className="mt-1 text-xs">and {deactivateWarning.jobCount - 3} more.</p>
+                  )}
+                  <p className="mt-2 text-xs">
+                    Those assignments stay as they are. Nothing is reassigned automatically, and
+                    the crew can still sign in and see its Jobs.
+                  </p>
+                  <div className="mt-3 flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setCrewActive(deactivateWarning.crew, false)}
+                      className="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-700"
+                    >
+                      Deactivate anyway
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDeactivateWarning(null)}
+                      className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-100"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
               </div>
             ))}
           </div>

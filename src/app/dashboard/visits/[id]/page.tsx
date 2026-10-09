@@ -89,7 +89,8 @@ export default function JobVisitPage() {
     .filter((c): c is Crew => !!c)
     .sort((a, b) => a.name.localeCompare(b.name));
   const assignedIds = new Set(assignedCrews.map((c) => c.id));
-  const addableCrews = allCrews.filter((c) => !assignedIds.has(c.id));
+  // Resting (inactive) crews can't be added, but one already on the Job stays listed below
+  const addableCrews = allCrews.filter((c) => c.is_active && !assignedIds.has(c.id));
 
   async function handleAddCrew() {
     if (!visit || !crewToAdd) return;
@@ -408,7 +409,14 @@ export default function JobVisitPage() {
                 {assignedCrews.map((crew) => (
                   <li key={crew.id} className="flex items-center justify-between rounded-lg border border-gray-100 bg-gray-50 px-4 py-3">
                     <div>
-                      <p className="text-sm font-medium text-gray-900">{crew.name}</p>
+                      <p className="text-sm font-medium text-gray-900">
+                        {crew.name}
+                        {!crew.is_active && (
+                          <span className="ml-2 rounded bg-gray-200 px-1.5 py-0.5 text-xs font-normal text-gray-600">
+                            Inactive
+                          </span>
+                        )}
+                      </p>
                       {crew.phone && <p className="text-xs text-gray-500">{crew.phone}</p>}
                     </div>
                     <button
@@ -436,7 +444,7 @@ export default function JobVisitPage() {
                 aria-label="Crew to add"
               >
                 <option value="">
-                  {addableCrews.length === 0 ? 'All crews are on this Job' : 'Add a crew...'}
+                  {addableCrews.length === 0 ? 'All active crews are on this Job' : 'Add a crew...'}
                 </option>
                 {addableCrews.map((crew) => (
                   <option key={crew.id} value={crew.id}>{crew.name}</option>

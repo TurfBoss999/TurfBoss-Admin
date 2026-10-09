@@ -65,7 +65,8 @@ export default function AddJobPage() {
           .order('name', { ascending: true });
 
         if (error) throw error;
-        setCrews(data as Crew[]);
+        // Resting (inactive) crews are not offered for new Jobs
+        setCrews((data as Crew[]).filter((c) => c.is_active));
       } catch {
         // Crews are optional - don't block on failure
       } finally {
@@ -798,7 +799,7 @@ export default function AddJobPage() {
               )}
               {!loadingCrews && crews.length === 0 && (
                 <p className="mt-1 text-xs text-gray-400">
-                  No crews yet.{' '}
+                  No active crews.{' '}
                   <Link
                     href="/dashboard/teams"
                     className="text-green-600 hover:text-green-700"

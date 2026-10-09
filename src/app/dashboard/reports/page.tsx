@@ -639,6 +639,11 @@ export default function ReportsPage() {
                         <div>
                           <p className="font-medium text-gray-900">
                             {crew.name}
+                            {!crew.is_active && (
+                              <span className="ml-2 rounded bg-gray-200 px-1.5 py-0.5 text-xs font-normal text-gray-600">
+                                Inactive
+                              </span>
+                            )}
                           </p>
                           <p className="text-xs text-gray-500">
                             {total} Sub Job{total !== 1 ? 's' : ''} total
@@ -864,7 +869,14 @@ export default function ReportsPage() {
                             </svg>
                           </div>
                           <div>
-                            <p className="font-medium text-gray-900">{crew.name}</p>
+                            <p className="font-medium text-gray-900">
+                              {crew.name}
+                              {!crew.is_active && (
+                                <span className="ml-2 rounded bg-gray-200 px-1.5 py-0.5 text-xs font-normal text-gray-600">
+                                  Inactive
+                                </span>
+                              )}
+                            </p>
                             {crew.truck_number && (
                               <p className="text-xs text-gray-400">🚛 {crew.truck_number}</p>
                             )}

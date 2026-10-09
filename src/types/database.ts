@@ -24,6 +24,8 @@ export interface Crew {
   name: string;
   phone: string | null;
   truck_number: string | null;
+  // A resting crew drops out of assignment pickers but keeps its history and its login
+  is_active: boolean;
 }
 
 export interface Property {
@@ -184,4 +186,5 @@ export interface UpdateCrewDto {
   name?: string;
   phone?: string;
   truck_number?: string;
+  is_active?: boolean;
 }
