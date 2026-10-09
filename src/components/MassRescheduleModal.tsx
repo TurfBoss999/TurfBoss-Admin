@@ -151,7 +151,7 @@ export default function MassRescheduleModal({
                 </label>
                 <label className="flex items-start gap-2 text-sm text-gray-800">
                   <input type="radio" name="mode" checked={mode === 'copy'} onChange={() => setMode('copy')} className="mt-1" />
-                  <span><b>Copy</b> onto a new date. Works from any Job, even a finished one. The new Job starts fresh (scheduled, no crew unless you carry them, no visit photos or notes) but keeps the site images.</span>
+                  <span><b>Copy</b> onto a new date. Works from any Job, even a finished one. The new Job starts fresh (scheduled, no crew unless you carry them, no visit photos or notes).</span>
                 </label>
               </div>
             </fieldset>
