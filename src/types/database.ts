@@ -254,3 +254,32 @@ export interface CreateJobsResult {
   created: { property_id: string; new_job_id: string; address: string | null; services: ServiceType[] }[];
   skipped: { property_id: string; address: string | null; reason: string }[];
 }
+
+// Delete Jobs (delete_jobs_preview / delete_jobs_apply) and remove one service (remove_service)
+export interface DeleteJobsPreviewRow {
+  visit_id: string;
+  address: string | null;
+  job_date: string | null;
+  action: 'delete' | 'skip';
+  reason: string | null;
+  service_count: number;
+  crew_count: number;
+}
+
+export interface DeleteJobsResult {
+  deleted_jobs: number;
+  deleted_sub_jobs: number;
+  deleted_crew_links: number;
+  skipped_count: number;
+  deleted: { job_id: string; address: string | null; date: string | null }[];
+  skipped: { job_id: string; address: string | null; reason: string }[];
+}
+
+export interface RemoveServiceResult {
+  removed: boolean;
+  // Why a removal was refused, in words for the person at the screen
+  reason?: string;
+  job_id?: string;
+  job_visit_id?: string;
+  service_type?: ServiceType;
+}

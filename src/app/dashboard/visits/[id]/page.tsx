@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { getSupabaseBrowserClient } from '@/lib/supabaseBrowser';
 import {
@@ -9,9 +9,13 @@ import {
   JobStatus,
   JobVisitWithDetails,
   JobWithCrew,
+  RemoveServiceResult,
+  ServiceType,
   SERVICE_TYPE_LABELS,
 } from '@/types/database';
 import StatusBadge from '@/components/StatusBadge';
+import DeleteJobsModal from '@/components/DeleteJobsModal';
+import { ALL_SERVICE_TYPES } from '@/lib/properties';
 import {
   badgeStatus,
   formatVisitDate,
@@ -31,8 +35,34 @@ const STATUS_DISPLAY: Record<JobStatus, string> = {
   cancelled: 'Cancelled',
 };
 
+// Why a service cannot be removed (null = it can). The database makes the same decision when asked;
+// this just explains it before the button is pressed.
+function removeBlockReason(job: JobWithCrew, serviceCount: number, photoJobIds: Set<string>): string | null {
+  if ((job.status ?? 'scheduled') === 'cancelled') return 'Cancelled services stay on the Job as a record.';
+  if (job.status !== 'scheduled' || job.crew_id || job.started_at || job.completed_at) {
+    return 'Already started. Set it to Cancelled instead.';
+  }
+  if (job.field_notes && job.field_notes.trim()) return 'A crew has noted an issue on it. Set it to Cancelled instead.';
+  if (photoJobIds.has(job.id)) return 'It has photos. Set it to Cancelled instead.';
+  if (serviceCount <= 1) return "This is the Job's only service. Delete the Job instead.";
+  return null;
+}
+
+// Why a whole Job cannot be deleted (null = it can)
+function deleteBlockReason(jobs: JobWithCrew[], photoJobIds: Set<string>): string | null {
+  if (jobs.some((j) => j.status === 'in_progress' || j.status === 'completed' || j.crew_id || j.started_at || j.completed_at)) {
+    return 'Work has started on a service, so this Job cannot be deleted. Set its services to Cancelled instead.';
+  }
+  if (jobs.some((j) => j.field_notes && j.field_notes.trim())) {
+    return 'A crew has noted an issue on a service, so this Job cannot be deleted.';
+  }
+  if (jobs.some((j) => photoJobIds.has(j.id))) return 'A service has photos, so this Job cannot be deleted.';
+  return null;
+}
+
 export default function JobVisitPage() {
   const params = useParams();
+  const router = useRouter();
   const id = params.id as string;
 
   const [visit, setVisit] = useState<JobVisitWithDetails | null>(null);
@@ -46,6 +76,19 @@ export default function JobVisitPage() {
 
   const [updatingJobId, setUpdatingJobId] = useState<string | null>(null);
   const [copiedStatusLink, setCopiedStatusLink] = useState(false);
+
+  // Services with photos (the Job page needs to know before offering to remove or delete)
+  const [photoJobIds, setPhotoJobIds] = useState<Set<string>>(new Set());
+  const [showAdd, setShowAdd] = useState(false);
+  const [addType, setAddType] = useState<ServiceType | ''>('');
+  const [addBusy, setAddBusy] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
+  const [removeConfirmId, setRemoveConfirmId] = useState<string | null>(null);
+  const [removeBusyId, setRemoveBusyId] = useState<string | null>(null);
+  const [removeError, setRemoveError] = useState<string | null>(null);
+  const [showDelete, setShowDelete] = useState(false);
+  // Set once the Job is deleted: closing the dialog then leaves this page, which no longer has a Job
+  const [jobDeleted, setJobDeleted] = useState(false);
 
   const [showDateModal, setShowDateModal] = useState(false);
   const [newDate, setNewDate] = useState('');
@@ -62,8 +105,18 @@ export default function JobVisitPage() {
     if (visitResult.error) throw visitResult.error;
     if (crewsResult.error) throw crewsResult.error;
 
-    setVisit((visitResult.data as JobVisitWithDetails | null) ?? null);
+    const loaded = (visitResult.data as JobVisitWithDetails | null) ?? null;
+    setVisit(loaded);
     setAllCrews((crewsResult.data as Crew[]) || []);
+
+    const serviceIds = (loaded?.jobs ?? []).map((j) => j.id);
+    if (serviceIds.length > 0) {
+      const photos = await supabase.from('job_photos').select('job_id').in('job_id', serviceIds);
+      if (photos.error) throw photos.error;
+      setPhotoJobIds(new Set((photos.data ?? []).map((p: { job_id: string }) => p.job_id)));
+    } else {
+      setPhotoJobIds(new Set());
+    }
   }, [id]);
 
   useEffect(() => {
@@ -140,6 +193,78 @@ export default function JobVisitPage() {
       setCrewError(err instanceof Error ? err.message : 'Failed to remove crew');
     } finally {
       setCrewBusy(false);
+    }
+  }
+
+  // Services this Job can still get: any of the four it does not have yet, with the property's own
+  // default services listed first.
+  function addableServices(): { type: ServiceType; isDefault: boolean }[] {
+    const have = new Set((visit?.jobs ?? []).map((j) => j.service_type));
+    const defaults = new Set(visit?.property?.default_services ?? []);
+    return ALL_SERVICE_TYPES.filter((t) => !have.has(t))
+      .map((t) => ({ type: t, isDefault: defaults.has(t) }))
+      .sort((a, b) => Number(b.isDefault) - Number(a.isDefault));
+  }
+
+  // Adds one service the way the New Job form does. The new service copies the Job's time window,
+  // estimate and notes from a service already on it, so every service on the Job reads the same.
+  async function handleAddService() {
+    if (!visit || !addType) return;
+    setAddError(null);
+    setAddBusy(true);
+    try {
+      // look again first: someone may have added it since this page loaded
+      const { data: existing, error: existingError } = await supabase
+        .from('jobs')
+        .select('service_type')
+        .eq('job_visit_id', visit.id);
+      if (existingError) throw existingError;
+      if ((existing ?? []).some((j: { service_type: string }) => j.service_type === addType)) {
+        throw new Error(`${SERVICE_TYPE_LABELS[addType]} is already on this Job.`);
+      }
+
+      const model = visit.jobs.find((j) => (j.status ?? 'scheduled') !== 'cancelled') ?? visit.jobs[0];
+      const { error: insertError } = await supabase.from('jobs').insert({
+        service_type: addType,
+        address: visit.property?.address || model?.address || '',
+        property_id: visit.property_id,
+        job_visit_id: visit.id,
+        date: visit.date,
+        time_window_start: model?.time_window_start ?? null,
+        time_window_end: model?.time_window_end ?? null,
+        est_duration_min: model?.est_duration_min ?? null,
+        crew_id: null,
+        status: 'scheduled',
+        service_notes: model?.service_notes ?? null,
+        skid_steer_used: false,
+      });
+      if (insertError) throw insertError;
+      setAddType('');
+      setShowAdd(false);
+      await fetchVisit();
+    } catch (err) {
+      setAddError(err instanceof Error ? err.message : 'Failed to add the service');
+    } finally {
+      setAddBusy(false);
+    }
+  }
+
+  async function handleRemoveService(job: JobWithCrew) {
+    setRemoveError(null);
+    setRemoveBusyId(job.id);
+    try {
+      const { data, error: rpcError } = await supabase.rpc('remove_service', { p_job_id: job.id });
+      if (rpcError) throw rpcError;
+      const result = data as RemoveServiceResult;
+      if (!result.removed) {
+        setRemoveError(result.reason || 'That service could not be removed.');
+      }
+      setRemoveConfirmId(null);
+      await fetchVisit();
+    } catch (err) {
+      setRemoveError(err instanceof Error ? err.message : (err as { message?: string })?.message || 'Failed to remove the service');
+    } finally {
+      setRemoveBusyId(null);
     }
   }
 
@@ -270,6 +395,8 @@ export default function JobVisitPage() {
   const status = visitStatus(subJobs);
   const doneCount = subJobs.filter((j) => j.status === 'completed').length;
   const statusLink = `/status/${visit.property_id}`;
+  const deleteBlocked = deleteBlockReason(subJobs, photoJobIds);
+  const addable = addableServices();
 
   return (
     <div className="space-y-6">
@@ -294,19 +421,81 @@ export default function JobVisitPage() {
             {subJobs.length !== 1 ? 's' : ''} completed
           </p>
         </div>
-        <button
-          onClick={openDateModal}
-          className="inline-flex items-center space-x-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
-        >
-          <span>Edit date</span>
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={openDateModal}
+            className="inline-flex items-center space-x-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+          >
+            <span>Edit date</span>
+          </button>
+          <button
+            onClick={() => setShowDelete(true)}
+            disabled={!!deleteBlocked}
+            title={deleteBlocked ?? 'Delete this Job and all its services'}
+            className="inline-flex items-center rounded-lg border border-red-300 bg-white px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:border-gray-200 disabled:text-gray-400 disabled:hover:bg-white"
+          >
+            Delete Job
+          </button>
+        </div>
       </div>
+      {deleteBlocked && (
+        <p className="-mt-3 text-xs text-gray-500" data-testid="delete-blocked">{deleteBlocked}</p>
+      )}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2 space-y-6">
           {/* Sub Jobs */}
           <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">Sub Jobs</h2>
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <h2 className="text-lg font-semibold text-gray-900">Sub Jobs</h2>
+              {addable.length > 0 ? (
+                <button
+                  onClick={() => { setShowAdd((v) => !v); setAddError(null); }}
+                  className="rounded-lg border border-green-600 px-3 py-1.5 text-sm font-medium text-green-700 hover:bg-green-50"
+                >
+                  Add service
+                </button>
+              ) : (
+                <span className="text-xs text-gray-400">Every service is already on this Job</span>
+              )}
+            </div>
+            {showAdd && addable.length > 0 && (
+              <div className="mb-4 rounded-lg border border-green-200 bg-green-50 p-3" data-testid="add-service">
+                <label htmlFor="add-service-type" className="block text-sm font-medium text-gray-700">Service to add</label>
+                <div className="mt-1 flex flex-wrap items-center gap-2">
+                  <select
+                    id="add-service-type"
+                    value={addType}
+                    onChange={(e) => setAddType(e.target.value as ServiceType | '')}
+                    className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
+                  >
+                    <option value="">Choose a service...</option>
+                    {addable.map((a) => (
+                      <option key={a.type} value={a.type}>
+                        {SERVICE_TYPE_LABELS[a.type]}{a.isDefault ? " (this property's default)" : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={handleAddService}
+                    disabled={!addType || addBusy}
+                    className="rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {addBusy ? 'Adding...' : 'Add'}
+                  </button>
+                  <button onClick={() => { setShowAdd(false); setAddType(''); setAddError(null); }} className="px-2 py-2 text-sm text-gray-600 hover:text-gray-900">
+                    Cancel
+                  </button>
+                </div>
+                <p className="mt-2 text-xs text-gray-500">
+                  It starts as Scheduled with no crew, and uses the same time window and notes as the other services.
+                </p>
+                {addError && <p role="alert" className="mt-2 text-sm text-red-700">{addError}</p>}
+              </div>
+            )}
+            {removeError && (
+              <p role="alert" className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-2 text-sm text-amber-900">{removeError}</p>
+            )}
             {subJobs.length === 0 ? (
               <p className="text-sm text-gray-500">No Sub Jobs on this Job.</p>
             ) : (
@@ -343,7 +532,42 @@ export default function JobVisitPage() {
                           <option key={s} value={s}>{STATUS_DISPLAY[s]}</option>
                         ))}
                       </select>
+                      {(() => {
+                        const blocked = removeBlockReason(job, subJobs.length, photoJobIds);
+                        if (removeConfirmId === job.id) {
+                          return (
+                            <span className="flex items-center gap-1">
+                              <button
+                                onClick={() => handleRemoveService(job)}
+                                disabled={removeBusyId === job.id}
+                                className="rounded-lg bg-red-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                              >
+                                {removeBusyId === job.id ? 'Removing...' : `Remove ${SERVICE_TYPE_LABELS[job.service_type]}`}
+                              </button>
+                              <button onClick={() => setRemoveConfirmId(null)} className="px-1.5 py-1 text-xs text-gray-600 hover:text-gray-900">
+                                Keep
+                              </button>
+                            </span>
+                          );
+                        }
+                        return (
+                          <button
+                            onClick={() => { setRemoveError(null); setRemoveConfirmId(job.id); }}
+                            disabled={!!blocked}
+                            title={blocked ?? `Remove ${SERVICE_TYPE_LABELS[job.service_type]} from this Job`}
+                            aria-label={`Remove ${SERVICE_TYPE_LABELS[job.service_type]}`}
+                            className="rounded-lg border border-red-200 px-2.5 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:border-gray-200 disabled:text-gray-400 disabled:hover:bg-white"
+                          >
+                            Remove
+                          </button>
+                        );
+                      })()}
                     </div>
+                    {removeBlockReason(job, subJobs.length, photoJobIds) && removeConfirmId !== job.id && (
+                      <p className="text-xs text-gray-400 sm:w-full sm:text-right" data-testid="remove-blocked">
+                        {removeBlockReason(job, subJobs.length, photoJobIds)}
+                      </p>
+                    )}
                   </div>
                 ))}
               </div>
@@ -463,6 +687,20 @@ export default function JobVisitPage() {
       </div>
 
       {/* Edit date modal */}
+      {showDelete && (
+        <DeleteJobsModal
+          visitIds={[visit.id]}
+          single={{ address, date: visit.date }}
+          onClose={() => {
+            setShowDelete(false);
+            if (jobDeleted) router.push('/dashboard/sites');
+          }}
+          onApplied={(result) => {
+            if (result.deleted_jobs > 0) setJobDeleted(true);
+          }}
+        />
+      )}
+
       {showDateModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="mx-4 w-full max-w-md rounded-xl bg-white p-6 shadow-xl">

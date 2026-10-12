@@ -6,6 +6,7 @@ import { getSupabaseBrowserClient } from '@/lib/supabaseBrowser';
 import { Crew, JobStatus, JobVisitWithDetails, RescheduleMode, SERVICE_TYPE_LABELS } from '@/types/database';
 import StatusBadge from '@/components/StatusBadge';
 import MassRescheduleModal from '@/components/MassRescheduleModal';
+import DeleteJobsModal from '@/components/DeleteJobsModal';
 import { badgeStatus, formatVisitDate, isAvailable, visitStatus } from '@/lib/jobVisits';
 
 type StatusFilter = 'All' | 'scheduled' | 'in_progress' | 'completed' | 'cancelled';
@@ -46,6 +47,7 @@ export default function JobsPage() {
   const [dateTo, setDateTo] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [rescheduleMode, setRescheduleMode] = useState<RescheduleMode | null>(null);
+  const [showDelete, setShowDelete] = useState(false);
   // Bumped to reload the list from the database, for example after a batch is applied
   const [reloadKey, setReloadKey] = useState(0);
   // The full-page spinner is for the first load only. A reload after a batch must leave the page
@@ -405,11 +407,22 @@ export default function JobsPage() {
             <button onClick={() => setRescheduleMode('copy')} className="rounded-lg border border-green-600 px-3 py-1.5 text-sm font-medium text-green-700 hover:bg-green-50">
               Copy to date
             </button>
+            <button onClick={() => setShowDelete(true)} className="rounded-lg border border-red-300 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50">
+              Delete selected
+            </button>
             <button onClick={() => setSelected(new Set())} className="px-2 py-1.5 text-sm font-medium text-gray-600 hover:text-gray-900">
               Clear
             </button>
           </div>
         </div>
+      )}
+
+      {showDelete && (
+        <DeleteJobsModal
+          visitIds={Array.from(selected)}
+          onClose={() => setShowDelete(false)}
+          onApplied={() => { setSelected(new Set()); setReloadKey((k) => k + 1); }}
+        />
       )}
 
       {rescheduleMode && (
