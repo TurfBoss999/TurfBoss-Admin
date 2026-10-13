@@ -501,8 +501,8 @@ export default function JobVisitPage() {
             ) : (
               <div className="divide-y divide-gray-100">
                 {subJobs.map((job) => (
-                  <div key={job.id} className="flex flex-col gap-3 py-3 sm:flex-row sm:items-center sm:justify-between">
-                    <Link href={`/dashboard/sites/${job.id}`} className="min-w-0 flex-1 group">
+                  <div key={job.id} className="flex flex-col gap-3 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+                    <Link href={`/dashboard/sites/${job.id}`} className="min-w-[9rem] flex-1 group">
                       <p className="text-sm font-medium text-gray-900 group-hover:text-green-700">
                         {SERVICE_TYPE_LABELS[job.service_type]}
                         {job.service_type === 'plow_lot' && job.skid_steer_used && (
@@ -519,7 +519,7 @@ export default function JobVisitPage() {
                             : ' '}
                       </p>
                     </Link>
-                    <div className="flex items-center gap-3">
+                    <div className="flex flex-wrap items-center gap-2 sm:gap-3">
                       <StatusBadge status={badgeStatus(job.status)} />
                       <select
                         value={job.status}
@@ -564,7 +564,7 @@ export default function JobVisitPage() {
                       })()}
                     </div>
                     {removeBlockReason(job, subJobs.length, photoJobIds) && removeConfirmId !== job.id && (
-                      <p className="text-xs text-gray-400 sm:w-full sm:text-right" data-testid="remove-blocked">
+                      <p className="w-full text-xs text-gray-400 sm:text-right" data-testid="remove-blocked">
                         {removeBlockReason(job, subJobs.length, photoJobIds)}
                       </p>
                     )}
