@@ -4,13 +4,14 @@ import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import { Sidebar, Header } from '@/components';
+import AccountLoadError from '@/components/AccountLoadError';
 
 export default function AdminLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const { isAuthenticated, isAdmin, isLoading, session } = useAuth();
+  const { isAuthenticated, isAdmin, isLoading, session, deniedReason, loadError } = useAuth();
   const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [hasChecked, setHasChecked] = useState(false);
@@ -19,7 +20,11 @@ export default function AdminLayout({
   const closeSidebar = useCallback(() => setSidebarOpen(false), []);
 
   useEffect(() => {
-    if (!isLoading && hasChecked) {
+    if (deniedReason) {
+      router.replace(`/login?reason=${deniedReason}`);
+      return;
+    }
+    if (!isLoading && hasChecked && !loadError) {
       if (!isAuthenticated && !session) {
         router.push('/login');
       } else if (!isAdmin) {
@@ -29,7 +34,15 @@ export default function AdminLayout({
     if (!isLoading) {
       setHasChecked(true);
     }
-  }, [isAuthenticated, isAdmin, isLoading, session, hasChecked, router]);
+  }, [isAuthenticated, isAdmin, isLoading, session, hasChecked, deniedReason, loadError, router]);
+
+  if (loadError) {
+    return <AccountLoadError />;
+  }
+
+  if (deniedReason) {
+    return null;
+  }
 
   if (isLoading || !hasChecked) {
     return (

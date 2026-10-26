@@ -3,15 +3,18 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
+import AccountLoadError from '@/components/AccountLoadError';
 
 export default function HomePage() {
-  const { isAuthenticated, isAdmin, isLoading, session } = useAuth();
+  const { isAuthenticated, isAdmin, isLoading, session, deniedReason, loadError } = useAuth();
   const router = useRouter();
   const [hasRedirected, setHasRedirected] = useState(false);
 
   useEffect(() => {
-    if (!isLoading && !hasRedirected) {
-      if (isAuthenticated || session) {
+    if (!isLoading && !hasRedirected && !loadError) {
+      if (deniedReason) {
+        router.push(`/login?reason=${deniedReason}`);
+      } else if (isAuthenticated || session) {
         if (isAdmin) {
           router.push('/dashboard');
         } else {
@@ -22,7 +25,11 @@ export default function HomePage() {
       }
       setHasRedirected(true);
     }
-  }, [isAuthenticated, isAdmin, isLoading, session, hasRedirected, router]);
+  }, [isAuthenticated, isAdmin, isLoading, session, hasRedirected, deniedReason, loadError, router]);
+
+  if (loadError) {
+    return <AccountLoadError />;
+  }
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-gray-100">

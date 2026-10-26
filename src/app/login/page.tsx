@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/context/AuthContext';
 import { TurfBossLogo } from '@/components/TurfBossLogo';
+import { DENY_MESSAGES, isDenyReason } from '@/lib/adminAccess';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -12,6 +13,14 @@ export default function LoginPage() {
   const [errors, setErrors] = useState<{ email?: string; password?: string; general?: string }>({});
   const { login, isLoading, isAuthenticated, isAdmin } = useAuth();
   const router = useRouter();
+
+  // The middleware or the dashboard sends turned-away accounts here with ?reason=crew|no_profile|error
+  useEffect(() => {
+    const reason = new URLSearchParams(window.location.search).get('reason');
+    if (isDenyReason(reason)) {
+      setErrors({ general: DENY_MESSAGES[reason] });
+    }
+  }, []);
 
   // Redirect if already authenticated
   useEffect(() => {

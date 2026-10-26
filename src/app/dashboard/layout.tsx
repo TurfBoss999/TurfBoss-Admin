@@ -4,13 +4,14 @@ import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import { Sidebar, Header } from '@/components';
+import AccountLoadError from '@/components/AccountLoadError';
 
 export default function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const { isAuthenticated, isLoading, session } = useAuth();
+  const { isAuthenticated, isLoading, session, deniedReason, loadError } = useAuth();
   const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [hasChecked, setHasChecked] = useState(false);
@@ -19,14 +20,27 @@ export default function DashboardLayout({
   const closeSidebar = useCallback(() => setSidebarOpen(false), []);
 
   useEffect(() => {
+    // A crew login or an account with no profile was signed out: send them to the login page with the reason
+    if (deniedReason) {
+      router.replace(`/login?reason=${deniedReason}`);
+      return;
+    }
     // Only redirect after initial load is complete AND we've confirmed no session
-    if (!isLoading && !isAuthenticated && !session && hasChecked) {
+    if (!isLoading && !isAuthenticated && !session && hasChecked && !loadError) {
       router.push('/login');
     }
     if (!isLoading) {
       setHasChecked(true);
     }
-  }, [isAuthenticated, isLoading, session, hasChecked, router]);
+  }, [isAuthenticated, isLoading, session, hasChecked, deniedReason, loadError, router]);
+
+  if (loadError) {
+    return <AccountLoadError />;
+  }
+
+  if (deniedReason) {
+    return null;
+  }
 
   if (isLoading || !hasChecked) {
     return (

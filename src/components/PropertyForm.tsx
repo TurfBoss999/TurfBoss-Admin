@@ -12,6 +12,9 @@ import {
   cleanEmail,
   emailProblem,
   ALL_SERVICE_TYPES,
+  uploadSiteMap,
+  SITE_MAP_TYPES,
+  SITE_MAP_MAX_BYTES,
 } from '@/lib/properties';
 
 const supabase = getSupabaseBrowserClient();
@@ -38,6 +41,25 @@ export default function PropertyForm({ property, onSaved }: PropertyFormProps) {
   // Set when the address is already taken, so the message can link to the existing one
   const [duplicate, setDuplicate] = useState<{ id: string; address: string } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // Add mode only: an optional site map to upload right after the property is saved
+  const [siteMapFile, setSiteMapFile] = useState<File | null>(null);
+  const [siteMapProblem, setSiteMapProblem] = useState<string | null>(null);
+
+  function handleSiteMapPick(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0] ?? null;
+    setSiteMapProblem(null);
+    if (!file) {
+      setSiteMapFile(null);
+      return;
+    }
+    // Checked here so a bad file is caught before anything is saved
+    if (!SITE_MAP_TYPES.includes(file.type)) {
+      setSiteMapProblem('Choose a PNG, JPG or WEBP image.');
+    } else if (file.size > SITE_MAP_MAX_BYTES) {
+      setSiteMapProblem('That image is larger than 10 MB. Choose a smaller one.');
+    }
+    setSiteMapFile(file);
+  }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -54,6 +76,11 @@ export default function PropertyForm({ property, onSaved }: PropertyFormProps) {
     const emailError = emailProblem(clientEmail);
     if (emailError) {
       setError(emailError);
+      return;
+    }
+
+    if (!property && siteMapFile && siteMapProblem) {
+      setError(siteMapProblem);
       return;
     }
 
@@ -94,7 +121,19 @@ export default function PropertyForm({ property, onSaved }: PropertyFormProps) {
           .select('id')
           .single();
         if (insertError) throw insertError;
-        router.push(`/dashboard/properties/${data.id}`);
+
+        // The property is saved. Upload the site map after it; if that fails, keep the property
+        // and open its page, which tells the admin to add the map there.
+        let mapFailed = false;
+        if (siteMapFile) {
+          try {
+            await uploadSiteMap(supabase, data.id, siteMapFile);
+          } catch (uploadErr) {
+            console.error('Site map upload failed:', uploadErr);
+            mapFailed = true;
+          }
+        }
+        router.push(`/dashboard/properties/${data.id}${mapFailed ? '?sitemap=failed' : ''}`);
         return;
       }
 
@@ -203,6 +242,26 @@ export default function PropertyForm({ property, onSaved }: PropertyFormProps) {
           ))}
         </div>
       </fieldset>
+
+      {!property && (
+        <div>
+          <label htmlFor="siteMap" className="block text-sm font-medium text-gray-700">
+            Site map <span className="font-normal text-gray-500">(optional, PNG, JPG or WEBP, up to 10 MB)</span>
+          </label>
+          <input
+            id="siteMap"
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            onChange={handleSiteMapPick}
+            className="mt-1 block w-full text-sm text-gray-700 file:mr-3 file:rounded-lg file:border file:border-gray-300 file:bg-white file:px-3 file:py-2 file:text-sm file:font-medium file:text-gray-700 hover:file:bg-gray-50"
+          />
+          {siteMapProblem && (
+            <p role="alert" className="mt-1.5 text-sm text-red-600">
+              {siteMapProblem}
+            </p>
+          )}
+        </div>
+      )}
 
       <div>
         <label htmlFor="notes" className="block text-sm font-medium text-gray-700">

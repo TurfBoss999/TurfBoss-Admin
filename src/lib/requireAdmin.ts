@@ -1,5 +1,6 @@
 import { createSupabaseServerClient } from './supabaseServer';
 import { Profile } from '@/types/database';
+import { adminAccessFor } from './adminAccess';
 
 export class AdminAuthError extends Error {
   public statusCode: number;
@@ -49,25 +50,13 @@ export async function requireAdmin(): Promise<AdminUser> {
     throw new AdminAuthError('Unauthorized: Error fetching profile', 403);
   }
 
-  let profile = result.data;
-
-  // If no profile exists, create one with admin role for first user
-  if (!profile) {
-    const { data: newProfile, error: insertError } = await supabase
-      .from('profiles')
-      .insert({ id: user.id, role: 'admin' })
-      .select()
-      .single();
-
-    if (insertError) {
-      console.error('Error creating profile:', insertError);
-      throw new AdminAuthError('Unauthorized: Could not create profile', 403);
-    }
-
-    profile = newProfile;
+  // No profile row means the account was never set up for Admin: refuse (nothing is created here).
+  const profile = result.data;
+  if (adminAccessFor(profile) === 'no_profile') {
+    throw new AdminAuthError('Forbidden: This account is not set up for Admin', 403);
   }
 
-  if (profile.role !== 'admin') {
+  if (adminAccessFor(profile) !== 'admin') {
     throw new AdminAuthError('Forbidden: Admin access required', 403);
   }
 

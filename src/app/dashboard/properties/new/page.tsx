@@ -25,6 +25,9 @@ export default function NewPropertyPage() {
 
       <div className="max-w-2xl rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
         <PropertyForm />
+        <p className="mt-4 text-xs text-gray-500">
+          You can add or change the site map on the property&apos;s page.
+        </p>
       </div>
     </div>
   );

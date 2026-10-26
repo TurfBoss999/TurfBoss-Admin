@@ -24,10 +24,16 @@ export default function PropertyDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  // Set when the property was just added but its site map did not upload (?sitemap=failed)
+  const [siteMapFailed, setSiteMapFailed] = useState(false);
 
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setSiteMapFailed(new URLSearchParams(window.location.search).get('sitemap') === 'failed');
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -146,6 +152,13 @@ export default function PropertyDetailPage() {
         <span className="truncate text-gray-900">{property.address}</span>
       </nav>
 
+      {siteMapFailed && !property.overlay_image_url && (
+        <div role="status" className="max-w-2xl rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+          Saved. The site map didn&apos;t upload, add it here.{' '}
+          <a href="#site-map" className="font-medium underline">Go to Site map</a>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
@@ -190,7 +203,7 @@ export default function PropertyDetailPage() {
       </div>
 
       {/* Site map */}
-      <div className="max-w-2xl rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
+      <div id="site-map" className="max-w-2xl rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
         <SiteMapField
           propertyId={property.id}
           url={property.overlay_image_url}
