@@ -1,4 +1,5 @@
 import { haversineMiles, meanCenter } from './distance';
+import { estimateMinutes } from './travel';
 import { LatLng, RouteGroup, RouteOptions, Stop } from './types';
 
 const EPS = 1e-9;
@@ -93,13 +94,17 @@ export function describeGroup(index: number, ordered: Stop[], options: RouteOpti
     if (k === 0) return options.startPoint ? haversineMiles(options.startPoint, s) : null;
     return haversineMiles(ordered[k - 1], s);
   });
+  const legMinutes = legMiles.map((m) => (m === null ? null : estimateMinutes(m)));
   const totalMiles = legMiles.reduce<number>((sum, m) => sum + (m ?? 0), 0);
+  const totalMinutes = legMinutes.reduce<number>((sum, m) => sum + (m ?? 0), 0);
   const farthest = ordered.reduce((m, s) => Math.max(m, haversineMiles(center, s)), 0);
   return {
     index,
     ids: ordered.map((s) => s.id),
     legMiles,
+    legMinutes,
     totalMiles,
+    totalMinutes,
     totalWeight: ordered.reduce((sum, s) => sum + s.weight, 0),
     center,
     farthestFromCenterMiles: farthest,

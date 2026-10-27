@@ -7,6 +7,7 @@ import { AssignRouteResult, Crew, JobStatus } from '@/types/database';
 import { formatVisitDate, todayLocalISO, visitStatus } from '@/lib/jobVisits';
 import { planRoutes, reorderGroup } from '@/lib/routing';
 import type { LatLng, RouteGroup, RouteOptions, Stop } from '@/lib/routing';
+import { SHOP_ADDRESS } from '@/lib/shop';
 
 const supabase = getSupabaseBrowserClient();
 
@@ -31,7 +32,7 @@ const plural = (n: number, one: string, many = one + 's') => `${n} ${n === 1 ? o
 export default function RoutesPage() {
   const [date, setDate] = useState(todayLocalISO());
   const [groupCountText, setGroupCountText] = useState('1');
-  const [startAddress, setStartAddress] = useState('');
+  const [startAddress, setStartAddress] = useState(SHOP_ADDRESS);
   const [onlyUnassigned, setOnlyUnassigned] = useState(false);
   const [replaceCrews, setReplaceCrews] = useState(false);
 
@@ -226,7 +227,12 @@ export default function RoutesPage() {
     setSaveError(null);
     setResult(null);
     try {
-      const payload = saveable.map((x) => ({ crew_id: x.crewId, visit_ids: x.group.ids }));
+      // leg_minutes lines up with visit_ids: the estimated drive minutes to each stop, which the crew sees
+      const payload = saveable.map((x) => ({
+        crew_id: x.crewId,
+        visit_ids: x.group.ids,
+        leg_minutes: x.group.legMinutes,
+      }));
       const { data, error: rpcError } = await supabase.rpc('assign_route_groups', {
         p_assignments: payload,
         p_replace: replaceCrews,
@@ -249,7 +255,7 @@ export default function RoutesPage() {
         <h1 className="text-2xl font-bold text-gray-900">Routes</h1>
         <p className="text-sm text-gray-500">
           Split a day&apos;s Jobs into groups that are close together, one group per truck, and put the
-          stops in order. Distances are straight line, not drive time.
+          stops in order. Minutes are an estimate from the distance between stops, not live traffic.
         </p>
       </div>
 
@@ -288,7 +294,7 @@ export default function RoutesPage() {
             </span>
           </label>
           <label className="block text-sm font-medium text-gray-700">
-            Start address (optional)
+            Start address
             <input
               type="text"
               value={startAddress}
@@ -299,6 +305,9 @@ export default function RoutesPage() {
               placeholder="Where the trucks leave from"
               className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
             />
+            <span className="mt-1 block text-xs font-normal text-gray-500">
+              Starts at the shop. Change it, or clear it to plan without a start point.
+            </span>
           </label>
         </div>
         <label className="flex items-center gap-2 text-sm text-gray-700">
@@ -377,7 +386,8 @@ export default function RoutesPage() {
               <b>{plural(plan.groups.length, 'group')}</b>, {plural(routable.length, 'stop')}
             </span>
             <span>
-              Total {miles(plan.groups.reduce((s, g) => s + g.totalMiles, 0))} mi (straight line)
+              Total about {plan.groups.reduce((s, g) => s + g.totalMinutes, 0)} min driving,{' '}
+              {miles(plan.groups.reduce((s, g) => s + g.totalMiles, 0))} mi (straight line)
             </span>
             {plan.options.startPoint && <span>Order starts from your start address</span>}
           </div>
@@ -392,8 +402,8 @@ export default function RoutesPage() {
                       <div>
                         <h3 className="text-base font-semibold text-gray-900">Group {gi + 1}</h3>
                         <p className="text-xs text-gray-500">
-                          {plural(group.ids.length, 'stop')} · {miles(group.totalMiles)} mi total (straight line) ·
-                          farthest stop {miles(group.farthestFromCenterMiles)} mi from the group&apos;s center
+                          {plural(group.ids.length, 'stop')} · about {group.totalMinutes} min driving ·{' '}
+                          {miles(group.totalMiles)} mi total (straight line) · farthest stop {miles(group.farthestFromCenterMiles)} mi from the group&apos;s center
                         </p>
                       </div>
                       <label className="text-xs font-medium text-gray-600">
@@ -422,6 +432,7 @@ export default function RoutesPage() {
                         const v = visitsById.get(id);
                         const services = v ? v.jobs.filter((j) => j.status !== 'cancelled').length : 0;
                         const leg = group.legMiles[k];
+                        const legMin = group.legMinutes[k];
                         return (
                           <li key={id} className="flex flex-wrap items-center justify-between gap-2 p-3 sm:px-4" data-testid="stop">
                             <div className="flex min-w-0 items-start gap-3">
@@ -435,7 +446,10 @@ export default function RoutesPage() {
                                 <p className="text-xs text-gray-500">
                                   {plural(services, 'service')}
                                   {leg !== null && leg !== undefined && (
-                                    <> · {miles(leg)} mi {k === 0 ? 'from start' : 'from previous stop'} (straight line)</>
+                                    <>
+                                      {' '}· about {legMin} min ({miles(leg)} mi straight line){' '}
+                                      {k === 0 ? 'from start' : 'from previous stop'}
+                                    </>
                                   )}
                                   {v && v.crews.length > 0 && (
                                     <> · already has {plural(v.crews.length, 'crew')}</>
@@ -524,6 +538,13 @@ export default function RoutesPage() {
                   <>, {result.crews_kept_because_started} kept because that crew had already started work</>
                 )}
                 . Crews: {saveable.map((x) => crewName(x.crewId)).join(', ')}.
+                <ul className="mt-1 list-disc pl-5">
+                  {saveable.map((x) => (
+                    <li key={x.group.index}>
+                      Group {x.group.index + 1} ({crewName(x.crewId)}): Stop 1{x.group.ids.length > 1 ? ` to ${x.group.ids.length}` : ''} saved
+                    </li>
+                  ))}
+                </ul>
               </div>
             )}
           </div>

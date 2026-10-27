@@ -24,8 +24,11 @@ export interface RouteGroup {
   // Straight-line miles from the previous stop. The first entry is the leg from the start
   // point when one was given, otherwise null.
   legMiles: (number | null)[];
+  // Estimated drive minutes for the same legs (null where legMiles is null)
+  legMinutes: (number | null)[];
   // Sum of the legs, including the start leg when there is one
   totalMiles: number;
+  totalMinutes: number;
   totalWeight: number;
   center: LatLng;
   // Straight-line miles from the group's center to its farthest stop

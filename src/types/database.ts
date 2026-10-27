@@ -83,6 +83,8 @@ export interface JobVisit {
   // Stop number on the day's route (1 = first stop). Null until the Job is planned on the Routes
   // page, and set back to null whenever the Job's date changes.
   route_order?: number | null;
+  // Estimated drive minutes from the previous stop (or from the start point for stop 1), saved with the plan
+  route_leg_minutes?: number | null;
   created_at: string;
 }
 
